@@ -660,10 +660,11 @@ function App() {
 
       {tab === 'payment' && (
         <div>
-          <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
             <MetricBox label="수납률" value={paymentSummary.rate + '%'} />
             <MetricBox label="완납" value={paymentSummary.paidCount + ' / ' + paymentSummary.total + '명'} />
             <MetricBox label="수납액" value={paymentSummary.totalCollected.toLocaleString() + '원'} />
+            <MetricBox label="매출액" value={paymentSummary.totalDue.toLocaleString() + '원'} />
           </div>
           <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
             {allStudents(data).map(s => {

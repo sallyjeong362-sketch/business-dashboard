@@ -50,11 +50,11 @@ function defaultData() {
   return {
     academyName: '에이스 영어학원',
     classes: [
-      { id: 'c1', name: '중2 내신반', teacher: '김선생', room: '301호', time: '15:00', days: ['월','수','금'],
+      { id: 'c1', name: '중2 내신반', teacher: '김선생', room: '301호', time: '15:00', endTime: '16:20', days: ['월','수','금'],
         students: [{id:'s1',name:'이서준'},{id:'s2',name:'최유나'},{id:'s3',name:'정민수'}] },
-      { id: 'c2', name: '고1 수능독해', teacher: '박선생', room: '302호', time: '17:00', days: ['화','목'],
+      { id: 'c2', name: '고1 수능독해', teacher: '박선생', room: '302호', time: '17:00', endTime: '18:20', days: ['화','목'],
         students: [{id:'s4',name:'박하은'},{id:'s5',name:'김도윤'}] },
-      { id: 'c3', name: '고3 실전모의고사', teacher: '김선생', room: '301호', time: '19:00', days: ['월','수','금'],
+      { id: 'c3', name: '고3 실전모의고사', teacher: '김선생', room: '301호', time: '19:00', endTime: '20:50', days: ['월','수','금'],
         students: [{id:'s6',name:'한지우'},{id:'s7',name:'윤서연'},{id:'s8',name:'조은우'}] },
     ],
     attendance: {},
@@ -111,6 +111,10 @@ function stripHtml(str) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&#39;/g, "'");
+}
+
+function formatTimeRange(c) {
+  return c.endTime ? `${c.time}~${c.endTime}` : c.time;
 }
 
 function saveData(data) {
@@ -199,10 +203,11 @@ function App() {
     if (!name) return;
     const teacher = prompt('담당 강사') || '';
     const room = prompt('강의실') || '';
-    const time = prompt('수업 시간 (예: 16:00)') || '00:00';
+    const time = prompt('시작 시간 (예: 16:00)') || '00:00';
+    const endTime = prompt('종료 시간 (예: 17:20)') || '';
     const daysInput = prompt('요일 (쉼표로 구분, 예: 월,수,금)') || '';
     const days = daysInput.split(',').map(d => d.trim()).filter(d => DAYS.includes(d));
-    const newClass = { id: 'c' + Date.now(), name, teacher, room, time, days, students: [] };
+    const newClass = { id: 'c' + Date.now(), name, teacher, room, time, endTime, days, students: [] };
     setData(prev => ({ ...prev, classes: [...prev.classes, newClass] }));
   }
 
@@ -375,12 +380,13 @@ function App() {
     if (!name) return;
     const teacher = prompt('담당 강사', cls.teacher) ?? cls.teacher;
     const room = prompt('강의실', cls.room) ?? cls.room;
-    const time = prompt('수업 시간 (예: 16:00)', cls.time) ?? cls.time;
+    const time = prompt('시작 시간 (예: 16:00)', cls.time) ?? cls.time;
+    const endTime = prompt('종료 시간 (예: 17:20)', cls.endTime || '') ?? cls.endTime;
     const daysInput = prompt('요일 (쉼표로 구분, 예: 월,수,금)', cls.days.join(',')) ?? cls.days.join(',');
     const days = daysInput.split(',').map(d => d.trim()).filter(d => DAYS.includes(d));
     setData(prev => ({
       ...prev,
-      classes: prev.classes.map(c => c.id === classId ? { ...c, name, teacher, room, time, days } : c)
+      classes: prev.classes.map(c => c.id === classId ? { ...c, name, teacher, room, time, endTime, days } : c)
     }));
   }
 
@@ -501,7 +507,7 @@ function App() {
               <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer"
                    onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
                 <div className="flex items-center gap-4">
-                  <div className="text-sm font-semibold text-indigo-700 w-14">{c.time}</div>
+                  <div className="text-sm font-semibold text-indigo-700 whitespace-nowrap">{formatTimeRange(c)}</div>
                   <div>
                     <p className="font-medium text-gray-900">{c.name}</p>
                     <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {c.students.length}명</p>
@@ -526,7 +532,7 @@ function App() {
                 {todayClasses.map(c => (
                   <button key={c.id} onClick={() => setSelectedClassId(c.id)}
                     className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-sm border ${selectedClassId===c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'}`}>
-                    {c.time} {c.name}
+                    {formatTimeRange(c)} {c.name}
                   </button>
                 ))}
               </div>
@@ -608,7 +614,7 @@ function App() {
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <p className="font-medium text-gray-900">{c.name}</p>
-                  <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {c.time} · {c.days.join(',')}</p>
+                  <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {formatTimeRange(c)} · {c.days.join(',')}</p>
                 </div>
                 <button onClick={() => deleteClass(c.id)} className="text-xs text-red-500 hover:underline">반 삭제</button>
               </div>
@@ -843,7 +849,7 @@ function App() {
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <p className="font-medium text-gray-900">{c.name}</p>
-                      <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {c.time} · {c.days.join(',')}</p>
+                      <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {formatTimeRange(c)} · {c.days.join(',')}</p>
                     </div>
                     <button onClick={() => editClassInfo(c.id)} className="text-xs text-indigo-600 hover:underline">정보 수정</button>
                   </div>

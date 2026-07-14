@@ -167,6 +167,13 @@ function getAttendanceEntry(data, date, classId, studentId) {
   return raw;
 }
 
+function normalizeHomework(entry) {
+  if (!entry) return null;
+  if (entry.homework === true) return 'done';
+  if (entry.homework === 'done' || entry.homework === 'missing') return entry.homework;
+  return null;
+}
+
 function allStudents(data) {
   const map = {};
   data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id }; }));
@@ -548,7 +555,8 @@ function App() {
       if (entry) {
         attCount++;
         if (entry.status === 'present' || entry.status === 'late') presentCount++;
-        if (typeof entry.homework === 'boolean') { hwTotal++; if (entry.homework) hwDone++; }
+        const hw = normalizeHomework(entry);
+        if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
       }
     });
     const attendanceRate = attCount ? Math.round((presentCount/attCount)*100) : null;
@@ -645,7 +653,8 @@ function App() {
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
                   {data.classes.find(c=>c.id===selectedClassId)?.students.map(s => {
-                    const entry = getAttendanceEntry(data, date, selectedClassId, s.id) || { status: null, homework: false };
+                    const entry = getAttendanceEntry(data, date, selectedClassId, s.id) || { status: null };
+                    const hwStatus = normalizeHomework(entry);
                     return (
                       <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
                         <span className="text-sm font-medium text-gray-800 w-20">{s.name}</span>
@@ -658,9 +667,14 @@ function App() {
                             </button>
                           ))}
                           <button
-                            onClick={() => setAttendance(selectedClassId, s.id, { homework: !entry.homework })}
-                            className={`text-xs px-2.5 py-1 rounded-full border ${entry.homework ? 'bg-indigo-100 text-indigo-700 border-indigo-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
-                            숙제 {entry.homework ? '완료' : '미완'}
+                            onClick={() => setAttendance(selectedClassId, s.id, { homework: hwStatus === 'done' ? null : 'done' })}
+                            className={`text-xs px-2.5 py-1 rounded-full border ${hwStatus==='done' ? 'bg-green-100 text-green-700 border-green-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                            숙제 완료
+                          </button>
+                          <button
+                            onClick={() => setAttendance(selectedClassId, s.id, { homework: hwStatus === 'missing' ? null : 'missing' })}
+                            className={`text-xs px-2.5 py-1 rounded-full border ${hwStatus==='missing' ? 'bg-red-100 text-red-700 border-red-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                            숙제 미완
                           </button>
                         </div>
                         {entry.status && entry.status !== 'present' && (
@@ -670,6 +684,15 @@ function App() {
                             onChange={e => setAttendance(selectedClassId, s.id, { note: e.target.value })}
                             placeholder="사유 (선택, 예: 감기몸살)"
                             className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs"
+                          />
+                        )}
+                        {hwStatus === 'missing' && (
+                          <textarea
+                            value={entry.homeworkNote || ''}
+                            onChange={e => setAttendance(selectedClassId, s.id, { homeworkNote: e.target.value })}
+                            placeholder="어떤 부분이 안 됐는지, 후속조치는 무엇인지 적어주세요"
+                            className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs"
+                            rows={2}
                           />
                         )}
                       </div>

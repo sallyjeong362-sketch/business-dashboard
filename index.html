@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>학원 운영 대시보드 - 시간표 & 출결</title>
+<title>학원 운영 대시보드 - 시간표 & 출결 & 리포트</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -20,7 +20,7 @@
 <script type="text/babel">
 const { useState, useEffect, useMemo } = React;
 
-const STORAGE_KEY = 'academy_dashboard_v1';
+const STORAGE_KEY = 'academy_dashboard_v2';
 const DAYS = ['일','월','화','수','목','금','토'];
 const STATUS = {
   present: { label: '출석', color: 'bg-green-100 text-green-700 border-green-300' },
@@ -28,9 +28,21 @@ const STATUS = {
   absent:  { label: '결석', color: 'bg-red-100 text-red-700 border-red-300' },
   early:   { label: '조퇴', color: 'bg-gray-100 text-gray-600 border-gray-300' },
 };
+const PAYMENT_STATUS = {
+  paid:    { label: '완납', color: 'bg-green-100 text-green-700 border-green-300' },
+  partial: { label: '부분납', color: 'bg-yellow-100 text-yellow-700 border-yellow-300' },
+  unpaid:  { label: '미납', color: 'bg-orange-100 text-orange-700 border-orange-300' },
+  overdue: { label: '연체', color: 'bg-red-100 text-red-700 border-red-300' },
+};
 
 function todayStr() {
   const d = new Date();
+  return d.toISOString().slice(0,10);
+}
+
+function daysAgoStr(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
   return d.toISOString().slice(0,10);
 }
 
@@ -46,19 +58,76 @@ function defaultData() {
         students: [{id:'s6',name:'한지우'},{id:'s7',name:'윤서연'},{id:'s8',name:'조은우'}] },
     ],
     attendance: {},
+    records: {
+      s4: { scores: [{id:'sc1', date: daysAgoStr(6), label:'주간 모의고사', score:91}], homework: [] },
+    },
+    reports: {},
+    announcements: [
+      { id: 'a1', title: '7월 정기 모의고사 일정 안내', content: '7월 19일(토) 오전 10시, 고3 전체 대상 실전 모의고사가 진행됩니다.', target: '학부모', date: todayStr(), status: '대기', channel: '미정' },
+    ],
+    payments: {
+      s1: { tuition: 350000, status: 'paid', dueDate: todayStr() },
+      s2: { tuition: 350000, status: 'unpaid', dueDate: todayStr() },
+      s3: { tuition: 350000, status: 'overdue', dueDate: daysAgoStr(10) },
+      s4: { tuition: 400000, status: 'paid', dueDate: todayStr() },
+      s5: { tuition: 400000, status: 'partial', dueDate: todayStr() },
+      s6: { tuition: 450000, status: 'paid', dueDate: todayStr() },
+      s7: { tuition: 450000, status: 'unpaid', dueDate: todayStr() },
+      s8: { tuition: 450000, status: 'paid', dueDate: todayStr() },
+    },
+    newsProxyUrl: '',
+    newsQuery: '수능 영어',
+    counseling: [
+      { id: 'k1', studentName: '박하은', parentName: '박하은 학부모', type: '정기상담', date: todayStr(), time: '18:00', content: '최근 성적 상승 관련 안내 및 다음 학기 목표 설정', nextAction: '2주 후 진도 재점검', status: '예정' },
+      { id: 'k2', studentName: '신입 문의', parentName: '', type: '입학상담', date: todayStr(), time: '20:00', content: '고1 신입생 레벨테스트 및 반 배정 상담', nextAction: '레벨테스트 결과 후 반 확정', status: '예정' },
+    ],
   };
 }
 
 function loadData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (!parsed.records) parsed.records = {};
+      if (!parsed.reports) parsed.reports = {};
+      if (!parsed.announcements) parsed.announcements = [];
+      if (!parsed.payments) parsed.payments = {};
+      if (parsed.newsProxyUrl === undefined) parsed.newsProxyUrl = '';
+      if (!parsed.newsQuery) parsed.newsQuery = '수능 영어';
+      if (!parsed.counseling) parsed.counseling = [];
+      return parsed;
+    }
   } catch (e) {}
   return defaultData();
 }
 
+function stripHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/<\/?b>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'");
+}
+
 function saveData(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function getAttendanceEntry(data, date, classId, studentId) {
+  const raw = data.attendance[date]?.[classId]?.[studentId];
+  if (!raw) return null;
+  if (typeof raw === 'string') return { status: raw, homework: false };
+  return raw;
+}
+
+function allStudents(data) {
+  const map = {};
+  data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id }; }));
+  return Object.values(map);
 }
 
 function App() {
@@ -66,6 +135,11 @@ function App() {
   const [tab, setTab] = useState('schedule');
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [date, setDate] = useState(todayStr());
+  const [reportStudentId, setReportStudentId] = useState(null);
+  const [comment, setComment] = useState('');
+  const [newsItems, setNewsItems] = useState([]);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState('');
 
   useEffect(() => { saveData(data); }, [data]);
 
@@ -84,25 +158,33 @@ function App() {
     if (!todayClasses.length) setSelectedClassId(null);
   }, [todayClasses]);
 
+  useEffect(() => {
+    const students = allStudents(data);
+    if (students.length && !students.find(s => s.id === reportStudentId)) {
+      setReportStudentId(students[0].id);
+    }
+  }, [data.classes]);
+
   const attendanceForDate = data.attendance[date] || {};
 
-  function setStatus(classId, studentId, status) {
+  function setAttendance(classId, studentId, patch) {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       if (!next.attendance[date]) next.attendance[date] = {};
       if (!next.attendance[date][classId]) next.attendance[date][classId] = {};
-      next.attendance[date][classId][studentId] = status;
+      const current = getAttendanceEntry(next, date, classId, studentId) || { status: null, homework: false };
+      next.attendance[date][classId][studentId] = { ...current, ...patch };
       return next;
     });
   }
 
-  // 오늘 전체 요약 계산
   const summary = useMemo(() => {
     let present=0, late=0, absent=0, early=0, total=0;
     todayClasses.forEach(c => {
       c.students.forEach(s => {
         total++;
-        const st = attendanceForDate[c.id]?.[s.id];
+        const entry = getAttendanceEntry(data, date, c.id, s.id);
+        const st = entry?.status;
         if (st === 'present') present++;
         else if (st === 'late') late++;
         else if (st === 'absent') absent++;
@@ -110,7 +192,7 @@ function App() {
       });
     });
     return { present, late, absent, early, total, unchecked: total - present - late - absent - early };
-  }, [todayClasses, attendanceForDate]);
+  }, [todayClasses, data, date]);
 
   function addClass() {
     const name = prompt('반 이름 (예: 중3 문법반)');
@@ -149,6 +231,186 @@ function App() {
     }));
   }
 
+  function editStudentInfo(classId, studentId) {
+    const cls = data.classes.find(c => c.id === classId);
+    const student = cls?.students.find(s => s.id === studentId);
+    if (!student) return;
+    const school = prompt('학교', student.school || '');
+    if (school === null) return;
+    const grade = prompt('학년 (예: 고1)', student.grade || '') || '';
+    const parentPhone = prompt('학부모 연락처', student.parentPhone || '') || '';
+    const studentPhone = prompt('학생 연락처', student.studentPhone || '') || '';
+    const memo = prompt('메모 (특이사항 등)', student.memo || '') || '';
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => c.id === classId
+        ? { ...c, students: c.students.map(s => s.id === studentId ? { ...s, school, grade, parentPhone, studentPhone, memo } : s) }
+        : c)
+    }));
+  }
+
+  function addScore(studentId) {
+    const label = prompt('시험 이름 (예: 7월 3주차 모의고사)');
+    if (!label) return;
+    const scoreStr = prompt('점수 (숫자만)');
+    const score = parseFloat(scoreStr);
+    if (isNaN(score)) { alert('숫자로 입력해주세요.'); return; }
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.records[studentId]) next.records[studentId] = { scores: [], homework: [] };
+      next.records[studentId].scores.push({ id: 'sc' + Date.now(), date: todayStr(), label, score });
+      return next;
+    });
+  }
+
+  function deleteScore(studentId, scoreId) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next.records[studentId].scores = next.records[studentId].scores.filter(sc => sc.id !== scoreId);
+      return next;
+    });
+  }
+
+  function addAnnouncement() {
+    const title = prompt('공지 제목 (예: 8월 여름방학 특강 안내)');
+    if (!title) return;
+    const content = prompt('공지 내용') || '';
+    const target = prompt('대상 (학부모 / 강사 / 전체)', '학부모') || '전체';
+    setData(prev => ({
+      ...prev,
+      announcements: [
+        { id: 'a' + Date.now(), title, content, target, date: todayStr(), status: '대기', channel: '미정' },
+        ...prev.announcements,
+      ],
+    }));
+  }
+
+  function deleteAnnouncement(id) {
+    if (!confirm('이 공지를 삭제하시겠습니까?')) return;
+    setData(prev => ({ ...prev, announcements: prev.announcements.filter(a => a.id !== id) }));
+  }
+
+  function setPaymentStatus(studentId, status) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr() };
+      next.payments[studentId].status = status;
+      return next;
+    });
+  }
+
+  function editTuition(studentId) {
+    const current = data.payments[studentId]?.tuition || 0;
+    const amountStr = prompt('수강료 금액 (원)', String(current));
+    const amount = parseInt(amountStr, 10);
+    if (isNaN(amount)) return;
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr() };
+      next.payments[studentId].tuition = amount;
+      return next;
+    });
+  }
+
+  function addCounseling() {
+    const studentName = prompt('학생 이름 (또는 문의자)');
+    if (!studentName) return;
+    const parentName = prompt('학부모 이름 (선택)') || '';
+    const type = prompt('상담 유형 (입학상담 / 정기상담 / 민원 / 기타)', '정기상담') || '기타';
+    const cDate = prompt('상담 날짜 (YYYY-MM-DD)', todayStr()) || todayStr();
+    const time = prompt('상담 시간 (예: 18:00)', '18:00') || '';
+    const content = prompt('상담 내용') || '';
+    const nextAction = prompt('다음 액션 (팔로우업 계획)') || '';
+    setData(prev => ({
+      ...prev,
+      counseling: [
+        { id: 'k' + Date.now(), studentName, parentName, type, date: cDate, time, content, nextAction, status: '예정' },
+        ...prev.counseling,
+      ],
+    }));
+  }
+
+  function deleteCounseling(id) {
+    if (!confirm('이 상담 기록을 삭제하시겠습니까?')) return;
+    setData(prev => ({ ...prev, counseling: prev.counseling.filter(k => k.id !== id) }));
+  }
+
+  function toggleCounselingStatus(id) {
+    setData(prev => ({
+      ...prev,
+      counseling: prev.counseling.map(k => k.id === id ? { ...k, status: k.status === '예정' ? '완료' : '예정' } : k),
+    }));
+  }
+
+  const todayCounselingCount = useMemo(() => {
+    return data.counseling.filter(k => k.date === date && k.status === '예정').length;
+  }, [data.counseling, date]);
+
+  async function fetchNews() {
+    if (!data.newsProxyUrl) { setNewsError('먼저 프록시 URL을 입력해주세요.'); return; }
+    setNewsLoading(true);
+    setNewsError('');
+    try {
+      const res = await fetch(`${data.newsProxyUrl}?query=${encodeURIComponent(data.newsQuery)}&display=10`);
+      if (!res.ok) throw new Error('요청 실패');
+      const json = await res.json();
+      setNewsItems(json.items || []);
+    } catch (e) {
+      setNewsError('뉴스를 불러오지 못했어요. 프록시 URL과 Worker의 API 키 설정을 확인해주세요.');
+    } finally {
+      setNewsLoading(false);
+    }
+  }
+
+  const paymentSummary = useMemo(() => {
+    const students = allStudents(data);
+    let paidCount = 0, totalDue = 0, totalCollected = 0;
+    students.forEach(s => {
+      const p = data.payments[s.id];
+      if (!p) return;
+      totalDue += p.tuition || 0;
+      if (p.status === 'paid') { paidCount++; totalCollected += p.tuition || 0; }
+    });
+    const rate = students.length ? Math.round((paidCount / students.length) * 100) : 0;
+    return { paidCount, total: students.length, rate, totalDue, totalCollected };
+  }, [data]);
+
+  const reportData = useMemo(() => {
+    if (!reportStudentId) return null;
+    const students = allStudents(data);
+    const student = students.find(s => s.id === reportStudentId);
+    if (!student) return null;
+
+    const rangeDates = Array.from({length:7}, (_,i) => daysAgoStr(6-i));
+    let attCount=0, presentCount=0, hwTotal=0, hwDone=0;
+    rangeDates.forEach(d => {
+      const entry = getAttendanceEntry(data, d, student.classId, student.id);
+      if (entry) {
+        attCount++;
+        if (entry.status === 'present' || entry.status === 'late') presentCount++;
+        if (typeof entry.homework === 'boolean') { hwTotal++; if (entry.homework) hwDone++; }
+      }
+    });
+    const attendanceRate = attCount ? Math.round((presentCount/attCount)*100) : null;
+    const homeworkRate = hwTotal ? Math.round((hwDone/hwTotal)*100) : null;
+
+    const scores = (data.records[student.id]?.scores || []).slice(-3).reverse();
+
+    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal };
+  }, [reportStudentId, data]);
+
+  function saveComment() {
+    if (!reportStudentId) return;
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.reports[reportStudentId]) next.reports[reportStudentId] = [];
+      next.reports[reportStudentId].push({ date: todayStr(), comment, channel: '미정' });
+      return next;
+    });
+    alert('리포트가 저장됐어요. 발송 채널(카카오 알림톡)은 추후 연동 예정입니다.');
+    setComment('');
+  }
+
   return (
     <div className="max-w-3xl mx-auto p-4 pb-16">
       <div className="flex items-center justify-between mb-4">
@@ -164,15 +426,16 @@ function App() {
         />
       </div>
 
-      <div className="grid grid-cols-4 gap-2 mb-5">
+      <div className="grid grid-cols-5 gap-2 mb-5">
         <SummaryCard label="오늘 수업" value={todayClasses.length + '개'} tone="bg-indigo-50 text-indigo-700" />
         <SummaryCard label="출석" value={summary.present + '명'} tone="bg-green-50 text-green-700" />
         <SummaryCard label="결석" value={summary.absent + '명'} tone="bg-red-50 text-red-700" />
         <SummaryCard label="미체크" value={summary.unchecked + '명'} tone="bg-gray-100 text-gray-600" />
+        <SummaryCard label="오늘 상담" value={todayCounselingCount + '건'} tone="bg-purple-50 text-purple-700" />
       </div>
 
-      <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit">
-        {[['schedule','시간표'],['attendance','출결'],['manage','반 관리']].map(([key,label]) => (
+      <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit flex-wrap">
+        {[['schedule','시간표'],['attendance','출결'],['payment','수납현황'],['manage','반 관리'],['report','학습리포트'],['notice','공지사항'],['counseling','상담관리'],['news','교육뉴스']].map(([key,label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -185,7 +448,7 @@ function App() {
         <div className="space-y-2">
           {todayClasses.length === 0 && <EmptyState text="오늘 예정된 수업이 없습니다." />}
           {todayClasses.map(c => {
-            const checked = c.students.filter(s => attendanceForDate[c.id]?.[s.id]).length;
+            const checked = c.students.filter(s => getAttendanceEntry(data, date, c.id, s.id)?.status).length;
             return (
               <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer"
                    onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
@@ -222,18 +485,23 @@ function App() {
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
                   {data.classes.find(c=>c.id===selectedClassId)?.students.map(s => {
-                    const current = attendanceForDate[selectedClassId]?.[s.id];
+                    const entry = getAttendanceEntry(data, date, selectedClassId, s.id) || { status: null, homework: false };
                     return (
-                      <div key={s.id} className="flex items-center justify-between p-3">
-                        <span className="text-sm font-medium text-gray-800">{s.name}</span>
-                        <div className="flex gap-1.5">
+                      <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
+                        <span className="text-sm font-medium text-gray-800 w-20">{s.name}</span>
+                        <div className="flex gap-1.5 flex-wrap">
                           {Object.entries(STATUS).map(([key, val]) => (
                             <button key={key}
-                              onClick={() => setStatus(selectedClassId, s.id, key)}
-                              className={`text-xs px-2.5 py-1 rounded-full border ${current===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                              onClick={() => setAttendance(selectedClassId, s.id, { status: key })}
+                              className={`text-xs px-2.5 py-1 rounded-full border ${entry.status===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
                               {val.label}
                             </button>
                           ))}
+                          <button
+                            onClick={() => setAttendance(selectedClassId, s.id, { homework: !entry.homework })}
+                            className={`text-xs px-2.5 py-1 rounded-full border ${entry.homework ? 'bg-indigo-100 text-indigo-700 border-indigo-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                            숙제 {entry.homework ? '완료' : '미완'}
+                          </button>
                         </div>
                       </div>
                     );
@@ -245,6 +513,40 @@ function App() {
               )}
             </React.Fragment>
           )}
+        </div>
+      )}
+
+      {tab === 'payment' && (
+        <div>
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <MetricBox label="수납률" value={paymentSummary.rate + '%'} />
+            <MetricBox label="완납" value={paymentSummary.paidCount + ' / ' + paymentSummary.total + '명'} />
+            <MetricBox label="수납액" value={paymentSummary.totalCollected.toLocaleString() + '원'} />
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
+            {allStudents(data).map(s => {
+              const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', dueDate: todayStr() };
+              return (
+                <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
+                  <div className="w-28">
+                    <p className="text-sm font-medium text-gray-800">{s.name}</p>
+                    <button onClick={() => editTuition(s.id)} className="text-xs text-gray-400 hover:text-indigo-600">
+                      {p.tuition.toLocaleString()}원
+                    </button>
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {Object.entries(PAYMENT_STATUS).map(([key, val]) => (
+                      <button key={key}
+                        onClick={() => setPaymentStatus(s.id, key)}
+                        className={`text-xs px-2.5 py-1 rounded-full border ${p.status===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                        {val.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -262,17 +564,216 @@ function App() {
                 </div>
                 <button onClick={() => deleteClass(c.id)} className="text-xs text-red-500 hover:underline">반 삭제</button>
               </div>
-              <div className="flex flex-wrap gap-1.5 mb-2">
+              <div className="space-y-1.5 mb-2">
                 {c.students.map(s => (
-                  <span key={s.id} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full flex items-center gap-1">
-                    {s.name}
-                    <button onClick={() => deleteStudent(c.id, s.id)} className="text-gray-400 hover:text-red-500">×</button>
-                  </span>
+                  <div key={s.id} className="flex items-center justify-between text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
+                    <div>
+                      <span className="text-gray-700 font-medium">{s.name}</span>
+                      {(s.school || s.grade || s.parentPhone) && (
+                        <p className="text-gray-400 mt-0.5">
+                          {[s.school, s.grade, s.parentPhone].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={() => editStudentInfo(c.id, s.id)} className="text-gray-500 hover:underline">정보</button>
+                      <button onClick={() => addScore(s.id)} className="text-indigo-600 hover:underline">성적</button>
+                      <button onClick={() => deleteStudent(c.id, s.id)} className="text-gray-400 hover:text-red-500">×</button>
+                    </div>
+                  </div>
                 ))}
               </div>
               <button onClick={() => addStudent(c.id)} className="text-xs text-indigo-600 hover:underline">+ 학생 추가</button>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === 'report' && (
+        <div>
+          <select
+            value={reportStudentId || ''}
+            onChange={e => setReportStudentId(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm mb-4"
+          >
+            {allStudents(data).map(s => (
+              <option key={s.id} value={s.id}>{s.name} ({s.className})</option>
+            ))}
+          </select>
+
+          {reportData && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-sm font-medium text-indigo-700">
+                    {reportData.student.name.slice(0,2)}
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{reportData.student.name} 학습리포트</p>
+                    <p className="text-xs text-gray-500">{daysAgoStr(6)} ~ {todayStr()} · {reportData.student.className}</p>
+                    {reportData.student.parentPhone && (
+                      <p className="text-xs text-gray-400">학부모 연락처: {reportData.student.parentPhone}</p>
+                    )}
+                  </div>
+                </div>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-yellow-50 text-yellow-700">발송 채널 미정</span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <MetricBox label="출석률" value={reportData.attendanceRate!==null ? reportData.attendanceRate+'%' : '기록없음'} />
+                <MetricBox label="숙제 제출률" value={reportData.homeworkRate!==null ? reportData.homeworkRate+'%' : '기록없음'} />
+                <MetricBox label="최근 점수" value={reportData.scores[0] ? reportData.scores[0].score+'점' : '기록없음'} />
+              </div>
+
+              {reportData.scores.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs text-gray-500 mb-1.5">최근 시험 기록</p>
+                  <div className="space-y-1">
+                    {reportData.scores.map(sc => (
+                      <div key={sc.id} className="flex justify-between text-xs text-gray-700 bg-gray-50 px-2.5 py-1.5 rounded-lg">
+                        <span>{sc.label} ({sc.date})</span>
+                        <span className="flex items-center gap-2">
+                          {sc.score}점
+                          <button onClick={() => deleteScore(reportData.student.id, sc.id)} className="text-gray-400 hover:text-red-500">×</button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-4">
+                <p className="text-xs text-gray-500 mb-1.5">담당 강사 코멘트</p>
+                <textarea
+                  value={comment}
+                  onChange={e => setComment(e.target.value)}
+                  placeholder="이번 주 학습 태도, 잘한 점, 다음 목표 등을 적어주세요."
+                  className="w-full border border-gray-300 rounded-lg p-2.5 text-sm h-20"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={saveComment} className="flex-1 py-2 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50">
+                  리포트 저장
+                </button>
+                <button
+                  disabled
+                  title="카카오 알림톡 연동 준비 중"
+                  className="flex-1 py-2 text-sm rounded-lg border border-gray-200 text-gray-300 cursor-not-allowed"
+                >
+                  발송 (보류)
+                </button>
+              </div>
+
+              {data.reports[reportData.student.id]?.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-gray-100">
+                  <p className="text-xs text-gray-500 mb-1.5">발송 이력</p>
+                  {data.reports[reportData.student.id].slice().reverse().map((r,i) => (
+                    <p key={i} className="text-xs text-gray-400">{r.date} · 채널: {r.channel}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'notice' && (
+        <div className="space-y-3">
+          <button onClick={addAnnouncement} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
+            + 새 공지 작성
+          </button>
+          {data.announcements.length === 0 && <EmptyState text="등록된 공지가 없습니다." />}
+          {data.announcements.map(a => (
+            <div key={a.id} className="bg-white border border-gray-200 rounded-xl p-4">
+              <div className="flex items-start justify-between mb-1.5">
+                <p className="font-medium text-gray-900">{a.title}</p>
+                <button onClick={() => deleteAnnouncement(a.id)} className="text-xs text-gray-400 hover:text-red-500 shrink-0 ml-2">삭제</button>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">{a.content}</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">대상: {a.target}</span>
+                <span className="text-xs text-gray-400">{a.date}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-700">발송 채널 미정</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'counseling' && (
+        <div className="space-y-3">
+          <button onClick={addCounseling} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
+            + 새 상담 등록
+          </button>
+          {data.counseling.length === 0 && <EmptyState text="등록된 상담이 없습니다." />}
+          {data.counseling
+            .slice()
+            .sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time))
+            .map(k => (
+              <div key={k.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div className="flex items-start justify-between mb-1.5">
+                  <div>
+                    <p className="font-medium text-gray-900">{k.studentName}{k.parentName ? ` · ${k.parentName}` : ''}</p>
+                    <p className="text-xs text-gray-500">{k.date} {k.time} · {k.type}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => toggleCounselingStatus(k.id)}
+                      className={`text-xs px-2 py-0.5 rounded-full border ${k.status==='완료' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-yellow-50 text-yellow-700 border-yellow-300'}`}
+                    >{k.status}</button>
+                    <button onClick={() => deleteCounseling(k.id)} className="text-xs text-gray-400 hover:text-red-500">삭제</button>
+                  </div>
+                </div>
+                {k.content && <p className="text-sm text-gray-600 mb-1">{k.content}</p>}
+                {k.nextAction && <p className="text-xs text-indigo-600">다음 액션: {k.nextAction}</p>}
+              </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'news' && (
+        <div>
+          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2">
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Worker 프록시 URL</label>
+              <input
+                type="text"
+                value={data.newsProxyUrl}
+                onChange={e => setData(prev => ({ ...prev, newsProxyUrl: e.target.value }))}
+                placeholder="https://your-worker-name.your-subdomain.workers.dev"
+                className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={data.newsQuery}
+                onChange={e => setData(prev => ({ ...prev, newsQuery: e.target.value }))}
+                placeholder="검색어 (예: 수능 영어)"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              />
+              <button onClick={fetchNews} disabled={newsLoading} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white disabled:opacity-50">
+                {newsLoading ? '불러오는 중...' : '뉴스 불러오기'}
+              </button>
+            </div>
+            {newsError && <p className="text-xs text-red-500">{newsError}</p>}
+            {!data.newsProxyUrl && <p className="text-xs text-gray-400">naver-news-proxy-worker.js를 Cloudflare Worker에 배포하고 주소를 입력하시면 뉴스를 불러올 수 있어요.</p>}
+          </div>
+
+          <div className="space-y-2">
+            {newsItems.map((item, i) => (
+              <a key={i} href={item.link} target="_blank" rel="noopener noreferrer"
+                 className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-indigo-300 transition">
+                <p className="font-medium text-gray-900 mb-1">{stripHtml(item.title)}</p>
+                <p className="text-xs text-gray-500 mb-1.5">{stripHtml(item.description)}</p>
+                <p className="text-xs text-gray-400">{item.pubDate}</p>
+              </a>
+            ))}
+            {newsItems.length === 0 && !newsLoading && (
+              <EmptyState text="검색어를 입력하고 '뉴스 불러오기'를 눌러주세요." />
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -284,6 +785,15 @@ function SummaryCard({ label, value, tone }) {
     <div className={`rounded-xl p-3 ${tone}`}>
       <p className="text-xs opacity-80 mb-1">{label}</p>
       <p className="text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function MetricBox({ label, value }) {
+  return (
+    <div className="bg-gray-50 rounded-lg p-2.5">
+      <p className="text-xs text-gray-500 mb-1">{label}</p>
+      <p className="text-base font-semibold text-gray-900">{value}</p>
     </div>
   );
 }

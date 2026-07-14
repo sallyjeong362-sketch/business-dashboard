@@ -704,7 +704,20 @@ function App() {
 
     const scores = (data.records[student.id]?.scores || []).slice(-3).reverse();
 
-    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal, attendanceDetails };
+    let homeworkHistory = [];
+    Object.keys(data.attendance).sort().reverse().forEach(d => {
+      const entry = getAttendanceEntry(data, d, student.classId, student.id);
+      const hw = normalizeHomework(entry);
+      if (hw) homeworkHistory.push({ date: d, hw, hwNote: entry?.homeworkNote || '' });
+    });
+    homeworkHistory = homeworkHistory.slice(0, 10);
+
+    const vocabTestHistory = data.vocabTests
+      .filter(v => v.studentId === student.id)
+      .slice().sort((a,b) => b.date.localeCompare(a.date))
+      .slice(0, 10);
+
+    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal, attendanceDetails, homeworkHistory, vocabTestHistory };
   }, [reportStudentId, data]);
 
   function saveComment() {
@@ -1049,6 +1062,42 @@ function App() {
                         {a.lesson && <p className="text-gray-700 mt-1">수업 내용: {a.lesson}</p>}
                         {a.homeworkAssigned && <p className="text-gray-700 mt-1">내준 숙제: {a.homeworkAssigned}</p>}
                         {a.attitude && <p className="text-gray-700 mt-1">수업 태도: {a.attitude}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {reportData.homeworkHistory.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs text-gray-500 mb-1.5">숙제 이력</p>
+                  <div className="space-y-1">
+                    {reportData.homeworkHistory.map((h, i) => (
+                      <div key={i} className="flex justify-between items-center gap-2 text-xs text-gray-700 bg-gray-50 px-2.5 py-1.5 rounded-lg">
+                        <span>{h.date}{h.hwNote ? ` — ${h.hwNote}` : ''}</span>
+                        <span className={`shrink-0 px-2 py-0.5 rounded-full font-medium ${h.hw === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {h.hw === 'done' ? '완료' : '미완'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {reportData.vocabTestHistory.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs text-gray-500 mb-1.5">단어/문법시험 기록</p>
+                  <div className="space-y-1">
+                    {reportData.vocabTestHistory.map(v => (
+                      <div key={v.id} className="flex justify-between items-center gap-2 flex-wrap text-xs text-gray-700 bg-gray-50 px-2.5 py-1.5 rounded-lg">
+                        <span>{v.date} · {v.testType}{v.comment ? ` — ${v.comment}` : ''}</span>
+                        <span className="shrink-0 flex items-center gap-1.5">
+                          <span className={`px-2 py-0.5 rounded-full font-medium ${v.result === 'pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {v.result === 'pass' ? '합격' : '불합격'}
+                          </span>
+                          {v.wrongCount > 0 && <span>{v.wrongCount}개 틀림</span>}
+                          {v.retest && <span className="px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-700 font-medium">재시험</span>}
+                        </span>
                       </div>
                     ))}
                   </div>

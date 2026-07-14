@@ -81,6 +81,10 @@ function defaultData() {
       { id: 'k1', studentName: '박하은', parentName: '박하은 학부모', type: '정기상담', date: todayStr(), time: '18:00', content: '최근 성적 상승 관련 안내 및 다음 학기 목표 설정', nextAction: '2주 후 진도 재점검', status: '예정' },
       { id: 'k2', studentName: '신입 문의', parentName: '', type: '입학상담', date: todayStr(), time: '20:00', content: '고1 신입생 레벨테스트 및 반 배정 상담', nextAction: '레벨테스트 결과 후 반 확정', status: '예정' },
     ],
+    lessonLogs: {},
+    workLogs: [
+      { id: 'w1', date: todayStr(), teacher: '김선생', category: '수업', content: '중2 내신반 3과 본문 해석 완료, 다음 시간 단어시험 예정' },
+    ],
   };
 }
 
@@ -96,6 +100,8 @@ function loadData() {
       if (parsed.newsProxyUrl === undefined) parsed.newsProxyUrl = '';
       if (!parsed.newsQuery) parsed.newsQuery = '수능 영어';
       if (!parsed.counseling) parsed.counseling = [];
+      if (!parsed.lessonLogs) parsed.lessonLogs = {};
+      if (!parsed.workLogs) parsed.workLogs = [];
       return parsed;
     }
   } catch (e) {}
@@ -174,6 +180,10 @@ function normalizeHomework(entry) {
   return null;
 }
 
+function getLessonLog(data, date, classId) {
+  return data.lessonLogs?.[date]?.[classId] || '';
+}
+
 function allStudents(data) {
   const map = {};
   data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id }; }));
@@ -224,6 +234,16 @@ function App() {
       if (!next.attendance[date][classId]) next.attendance[date][classId] = {};
       const current = getAttendanceEntry(next, date, classId, studentId) || { status: null, homework: false };
       next.attendance[date][classId][studentId] = { ...current, ...patch };
+      return next;
+    });
+  }
+
+  function setLessonLog(classId, content) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.lessonLogs[date]) next.lessonLogs[date] = {};
+      if (content) next.lessonLogs[date][classId] = content;
+      else delete next.lessonLogs[date][classId];
       return next;
     });
   }
@@ -463,6 +483,40 @@ function App() {
     return data.counseling.filter(k => k.date === date && k.status === '예정').length;
   }, [data.counseling, date]);
 
+  function addWorkLog() {
+    const teacher = prompt('작성자 (예: 김선생)') || '';
+    const category = prompt('구분 (수업 / 상담 / 행정 / 기타)', '수업') || '기타';
+    const wDate = prompt('날짜 (YYYY-MM-DD)', todayStr()) || todayStr();
+    const content = prompt('내용');
+    if (!content) return;
+    setData(prev => ({
+      ...prev,
+      workLogs: [
+        { id: 'w' + Date.now(), date: wDate, teacher, category, content },
+        ...prev.workLogs,
+      ],
+    }));
+  }
+
+  function deleteWorkLog(id) {
+    if (!confirm('이 업무일지를 삭제하시겠습니까?')) return;
+    setData(prev => ({ ...prev, workLogs: prev.workLogs.filter(w => w.id !== id) }));
+  }
+
+  function editWorkLog(id) {
+    const w = data.workLogs.find(w => w.id === id);
+    if (!w) return;
+    const teacher = prompt('작성자', w.teacher) ?? w.teacher;
+    const category = prompt('구분 (수업 / 상담 / 행정 / 기타)', w.category) ?? w.category;
+    const wDate = prompt('날짜 (YYYY-MM-DD)', w.date) ?? w.date;
+    const content = prompt('내용', w.content);
+    if (!content) return;
+    setData(prev => ({
+      ...prev,
+      workLogs: prev.workLogs.map(x => x.id === id ? { ...x, teacher, category, date: wDate, content } : x),
+    }));
+  }
+
   async function fetchNews() {
     if (!data.newsProxyUrl) { setNewsError('먼저 프록시 URL을 입력해주세요.'); return; }
     setNewsLoading(true);
@@ -550,21 +604,27 @@ function App() {
 
     const rangeDates = Array.from({length:7}, (_,i) => daysAgoStr(6-i));
     let attCount=0, presentCount=0, hwTotal=0, hwDone=0;
+    const attendanceDetails = [];
     rangeDates.forEach(d => {
       const entry = getAttendanceEntry(data, d, student.classId, student.id);
-      if (entry) {
+      if (entry && entry.status) {
         attCount++;
         if (entry.status === 'present' || entry.status === 'late') presentCount++;
         const hw = normalizeHomework(entry);
         if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
+        attendanceDetails.push({
+          date: d, status: entry.status, note: entry.note || '', hw, hwNote: entry.homeworkNote || '',
+          lesson: getLessonLog(data, d, student.classId),
+        });
       }
     });
+    attendanceDetails.reverse();
     const attendanceRate = attCount ? Math.round((presentCount/attCount)*100) : null;
     const homeworkRate = hwTotal ? Math.round((hwDone/hwTotal)*100) : null;
 
     const scores = (data.records[student.id]?.scores || []).slice(-3).reverse();
 
-    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal };
+    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal, attendanceDetails };
   }, [reportStudentId, data]);
 
   function saveComment() {
@@ -603,7 +663,7 @@ function App() {
       </div>
 
       <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit flex-wrap">
-        {[['schedule','시간표'],['attendance','출결'],['payment','수납현황'],['manage','반 관리'],['report','학습리포트'],['notice','공지사항'],['counseling','상담관리'],['news','교육뉴스'],['admin','관리자']].map(([key,label]) => (
+        {[['schedule','시간표'],['attendance','출결'],['payment','수납현황'],['manage','반 관리'],['report','학습리포트'],['notice','공지사항'],['counseling','상담관리'],['worklog','업무일지'],['news','교육뉴스'],['admin','관리자']].map(([key,label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -650,6 +710,18 @@ function App() {
                   </button>
                 ))}
               </div>
+              {selectedClassId && (
+                <div className="mb-4">
+                  <label className="text-xs text-gray-500 mb-1 block">오늘 수업 내용 (진도)</label>
+                  <textarea
+                    value={getLessonLog(data, date, selectedClassId)}
+                    onChange={e => setLessonLog(selectedClassId, e.target.value)}
+                    placeholder="예: 3과 본문 해석, 단어시험 진행"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    rows={2}
+                  />
+                </div>
+              )}
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
                   {data.classes.find(c=>c.id===selectedClassId)?.students.map(s => {
@@ -830,6 +902,30 @@ function App() {
                 <MetricBox label="최근 점수" value={reportData.scores[0] ? reportData.scores[0].score+'점' : '기록없음'} />
               </div>
 
+              {reportData.attendanceDetails.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs text-gray-500 mb-1.5">최근 출결 상세</p>
+                  <div className="space-y-1.5">
+                    {reportData.attendanceDetails.map((a, i) => (
+                      <div key={i} className="text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium text-gray-700">{a.date}</span>
+                          <span className={`px-1.5 py-0.5 rounded-full ${STATUS[a.status]?.color}`}>{STATUS[a.status]?.label}</span>
+                          {a.hw && (
+                            <span className={`px-1.5 py-0.5 rounded-full ${a.hw === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              숙제 {a.hw === 'done' ? '완료' : '미완'}
+                            </span>
+                          )}
+                        </div>
+                        {a.note && <p className="text-gray-500 mt-1">사유: {a.note}</p>}
+                        {a.hwNote && <p className="text-gray-500 mt-1">숙제 후속조치: {a.hwNote}</p>}
+                        {a.lesson && <p className="text-gray-700 mt-1">수업 내용: {a.lesson}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {reportData.scores.length > 0 && (
                 <div className="mb-4">
                   <p className="text-xs text-gray-500 mb-1.5">최근 시험 기록</p>
@@ -937,6 +1033,34 @@ function App() {
                 </div>
                 {k.content && <p className="text-sm text-gray-600 mb-1">{k.content}</p>}
                 {k.nextAction && <p className="text-xs text-indigo-600">다음 액션: {k.nextAction}</p>}
+              </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'worklog' && (
+        <div className="space-y-3">
+          <button onClick={addWorkLog} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
+            + 업무일지 작성
+          </button>
+          {data.workLogs.length === 0 && <EmptyState text="작성된 업무일지가 없습니다." />}
+          {data.workLogs
+            .slice()
+            .sort((a,b) => b.date.localeCompare(a.date))
+            .map(w => (
+              <div key={w.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div className="flex items-start justify-between mb-1.5">
+                  <div>
+                    <p className="font-medium text-gray-900">{w.teacher || '미지정'}</p>
+                    <p className="text-xs text-gray-500">{w.date}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{w.category}</span>
+                    <button onClick={() => editWorkLog(w.id)} className="text-xs text-indigo-600 hover:underline">수정</button>
+                    <button onClick={() => deleteWorkLog(w.id)} className="text-xs text-gray-400 hover:text-red-500">삭제</button>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-600">{w.content}</p>
               </div>
           ))}
         </div>

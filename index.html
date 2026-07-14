@@ -228,6 +228,7 @@ function App() {
   const [reportSendSuccessFlash, setReportSendSuccessFlash] = useState(false);
   const [noticeSendPending, setNoticeSendPending] = useState({});
   const [noticeSendError, setNoticeSendError] = useState({});
+  const [manageExpanded, setManageExpanded] = useState({});
 
   useEffect(() => { saveData(data); }, [data]);
 
@@ -1044,43 +1045,59 @@ function App() {
           <button onClick={addClass} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
             + 새 반 추가
           </button>
-          {data.classes.map(c => (
-            <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <p className="font-medium text-gray-900">{c.name}</p>
-                  <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {classScheduleSummary(c)}</p>
-                </div>
-                <button onClick={() => deleteClass(c.id)} className="text-xs text-red-500 hover:underline">반 삭제</button>
-              </div>
-              <div className="space-y-1.5 mb-2">
-                {c.students.map(s => (
-                  <div key={s.id} className="flex items-center justify-between text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
-                    <div>
-                      <span className="text-gray-700 font-medium">{s.name}</span>
-                      {(s.school || s.grade || s.parentPhone || s.enrollDate || s.paymentDueDay) && (
-                        <p className="text-gray-400 mt-0.5">
-                          {[
-                            s.school,
-                            s.grade,
-                            s.parentPhone,
-                            s.enrollDate && `등록 ${s.enrollDate}`,
-                            s.paymentDueDay && `매월 ${s.paymentDueDay}일 결제`,
-                          ].filter(Boolean).join(' · ')}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => editStudentInfo(c.id, s.id)} className="text-gray-500 hover:underline">정보</button>
-                      <button onClick={() => addScore(s.id)} className="text-indigo-600 hover:underline">성적</button>
-                      <button onClick={() => deleteStudent(c.id, s.id)} className="text-gray-400 hover:text-red-500">×</button>
-                    </div>
+          {data.classes.map(c => {
+            const expanded = !!manageExpanded[c.id];
+            return (
+              <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div
+                  className="flex items-center justify-between cursor-pointer -m-1 p-1 rounded-lg hover:bg-gray-50"
+                  onClick={() => setManageExpanded(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                >
+                  <div>
+                    <p className="font-medium text-gray-900">{c.name}</p>
+                    <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {classScheduleSummary(c)} · 학생 {c.students.length}명</p>
                   </div>
-                ))}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      onClick={e => { e.stopPropagation(); deleteClass(c.id); }}
+                      className="text-xs text-red-500 hover:underline"
+                    >반 삭제</button>
+                    <span className={`text-xs text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+                  </div>
+                </div>
+                {expanded && (
+                  <>
+                    <div className="space-y-1.5 mt-3 mb-2">
+                      {c.students.map(s => (
+                        <div key={s.id} className="flex items-center justify-between text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
+                          <div>
+                            <span className="text-gray-700 font-medium">{s.name}</span>
+                            {(s.school || s.grade || s.parentPhone || s.enrollDate || s.paymentDueDay) && (
+                              <p className="text-gray-400 mt-0.5">
+                                {[
+                                  s.school,
+                                  s.grade,
+                                  s.parentPhone,
+                                  s.enrollDate && `등록 ${s.enrollDate}`,
+                                  s.paymentDueDay && `매월 ${s.paymentDueDay}일 결제`,
+                                ].filter(Boolean).join(' · ')}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button onClick={() => editStudentInfo(c.id, s.id)} className="text-gray-500 hover:underline">정보</button>
+                            <button onClick={() => addScore(s.id)} className="text-indigo-600 hover:underline">성적</button>
+                            <button onClick={() => deleteStudent(c.id, s.id)} className="text-gray-400 hover:text-red-500">×</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button onClick={() => addStudent(c.id)} className="text-xs text-indigo-600 hover:underline">+ 학생 추가</button>
+                  </>
+                )}
               </div>
-              <button onClick={() => addStudent(c.id)} className="text-xs text-indigo-600 hover:underline">+ 학생 추가</button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

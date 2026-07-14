@@ -117,6 +117,29 @@ function formatTimeRange(c) {
   return c.endTime ? `${c.time}~${c.endTime}` : c.time;
 }
 
+function classTimeForDay(c, day) {
+  const o = c.daySchedule && c.daySchedule[day];
+  return o ? { time: o.time, endTime: o.endTime } : { time: c.time, endTime: c.endTime };
+}
+
+function formatClassTimeForDay(c, day) {
+  const t = classTimeForDay(c, day);
+  return t.endTime ? `${t.time}~${t.endTime}` : t.time;
+}
+
+function hasVariedTimes(c) {
+  if (!c.daySchedule) return false;
+  return c.days.some(d => {
+    const o = c.daySchedule[d];
+    return o && (o.time !== c.time || o.endTime !== c.endTime);
+  });
+}
+
+function classScheduleSummary(c) {
+  if (!hasVariedTimes(c)) return `${formatTimeRange(c)} · ${c.days.join(',')}`;
+  return c.days.map(d => `${d} ${formatClassTimeForDay(c, d)}`).join(', ');
+}
+
 function saveData(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -152,7 +175,7 @@ function App() {
   const todayClasses = useMemo(() => {
     return data.classes
       .filter(c => c.days.includes(weekday))
-      .sort((a,b) => a.time.localeCompare(b.time));
+      .sort((a,b) => classTimeForDay(a, weekday).time.localeCompare(classTimeForDay(b, weekday).time));
   }, [data.classes, weekday]);
 
   useEffect(() => {
@@ -433,7 +456,46 @@ function App() {
     const days = daysInput.split(',').map(d => d.trim()).filter(d => DAYS.includes(d));
     setData(prev => ({
       ...prev,
-      classes: prev.classes.map(c => c.id === classId ? { ...c, name, teacher, room, time, endTime, days } : c)
+      classes: prev.classes.map(c => {
+        if (c.id !== classId) return c;
+        const daySchedule = { ...(c.daySchedule || {}) };
+        Object.keys(daySchedule).forEach(d => { if (!days.includes(d)) delete daySchedule[d]; });
+        return { ...c, name, teacher, room, time, endTime, days, daySchedule };
+      })
+    }));
+  }
+
+  function editDayTime(classId, day) {
+    const cls = data.classes.find(c => c.id === classId);
+    if (!cls) return;
+    const current = (cls.daySchedule && cls.daySchedule[day]) || { time: cls.time, endTime: cls.endTime || '' };
+    const timeStr = prompt(`${day}요일 시작 시간`, current.time);
+    if (!timeStr) return;
+    const endTimeStr = prompt(`${day}요일 종료 시간`, current.endTime || '') ?? current.endTime;
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => {
+        if (c.id !== classId) return c;
+        const daySchedule = { ...(c.daySchedule || {}) };
+        if (timeStr === c.time && endTimeStr === (c.endTime || '')) {
+          delete daySchedule[day];
+        } else {
+          daySchedule[day] = { time: timeStr, endTime: endTimeStr };
+        }
+        return { ...c, daySchedule };
+      })
+    }));
+  }
+
+  function resetDayTime(classId, day) {
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => {
+        if (c.id !== classId || !c.daySchedule) return c;
+        const daySchedule = { ...c.daySchedule };
+        delete daySchedule[day];
+        return { ...c, daySchedule };
+      })
     }));
   }
 
@@ -554,7 +616,7 @@ function App() {
               <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer"
                    onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
                 <div className="flex items-center gap-4">
-                  <div className="text-sm font-semibold text-indigo-700 whitespace-nowrap">{formatTimeRange(c)}</div>
+                  <div className="text-sm font-semibold text-indigo-700 whitespace-nowrap">{formatClassTimeForDay(c, weekday)}</div>
                   <div>
                     <p className="font-medium text-gray-900">{c.name}</p>
                     <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {c.students.length}명</p>
@@ -579,7 +641,7 @@ function App() {
                 {todayClasses.map(c => (
                   <button key={c.id} onClick={() => setSelectedClassId(c.id)}
                     className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-sm border ${selectedClassId===c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'}`}>
-                    {formatTimeRange(c)} {c.name}
+                    {formatClassTimeForDay(c, weekday)} {c.name}
                   </button>
                 ))}
               </div>
@@ -661,7 +723,7 @@ function App() {
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <p className="font-medium text-gray-900">{c.name}</p>
-                  <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {formatTimeRange(c)} · {c.days.join(',')}</p>
+                  <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {classScheduleSummary(c)}</p>
                 </div>
                 <button onClick={() => deleteClass(c.id)} className="text-xs text-red-500 hover:underline">반 삭제</button>
               </div>
@@ -901,9 +963,25 @@ function App() {
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <p className="font-medium text-gray-900">{c.name}</p>
-                      <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {formatTimeRange(c)} · {c.days.join(',')}</p>
+                      <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {classScheduleSummary(c)}</p>
                     </div>
                     <button onClick={() => editClassInfo(c.id)} className="text-xs text-indigo-600 hover:underline">정보 수정</button>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-1">요일별 수업 시간</p>
+                  <div className="space-y-1 mb-2">
+                    {c.days.map(d => {
+                      const overridden = !!(c.daySchedule && c.daySchedule[d]);
+                      return (
+                        <div key={d} className="flex items-center justify-between text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
+                          <span className={overridden ? 'text-indigo-600 font-medium' : 'text-gray-700'}>{d} {formatClassTimeForDay(c, d)}</span>
+                          <span className="flex items-center gap-2">
+                            <button onClick={() => editDayTime(c.id, d)} className="text-indigo-600 hover:underline">수정</button>
+                            {overridden && <button onClick={() => resetDayTime(c.id, d)} className="text-gray-400 hover:underline">기본값</button>}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {c.days.length === 0 && <p className="text-xs text-gray-400">요일이 지정되지 않았습니다.</p>}
                   </div>
                   <div className="space-y-1">
                     {c.students.map(s => (

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>학원 운영 대시보드 - 시간표 & 출결</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d1c9f0; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-gray-50">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const STORAGE_KEY = 'academy_dashboard_v1';
+const DAYS = ['일','월','화','수','목','금','토'];
+const STATUS = {
+  present: { label: '출석', color: 'bg-green-100 text-green-700 border-green-300' },
+  late:    { label: '지각', color: 'bg-yellow-100 text-yellow-700 border-yellow-300' },
+  absent:  { label: '결석', color: 'bg-red-100 text-red-700 border-red-300' },
+  early:   { label: '조퇴', color: 'bg-gray-100 text-gray-600 border-gray-300' },
+};
+
+function todayStr() {
+  const d = new Date();
+  return d.toISOString().slice(0,10);
+}
+
+function defaultData() {
+  return {
+    academyName: '에이스 영어학원',
+    classes: [
+      { id: 'c1', name: '중2 내신반', teacher: '김선생', room: '301호', time: '15:00', days: ['월','수','금'],
+        students: [{id:'s1',name:'이서준'},{id:'s2',name:'최유나'},{id:'s3',name:'정민수'}] },
+      { id: 'c2', name: '고1 수능독해', teacher: '박선생', room: '302호', time: '17:00', days: ['화','목'],
+        students: [{id:'s4',name:'박하은'},{id:'s5',name:'김도윤'}] },
+      { id: 'c3', name: '고3 실전모의고사', teacher: '김선생', room: '301호', time: '19:00', days: ['월','수','금'],
+        students: [{id:'s6',name:'한지우'},{id:'s7',name:'윤서연'},{id:'s8',name:'조은우'}] },
+    ],
+    attendance: {},
+  };
+}
+
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return defaultData();
+}
+
+function saveData(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function App() {
+  const [data, setData] = useState(loadData());
+  const [tab, setTab] = useState('schedule');
+  const [selectedClassId, setSelectedClassId] = useState(null);
+  const [date, setDate] = useState(todayStr());
+
+  useEffect(() => { saveData(data); }, [data]);
+
+  const weekday = DAYS[new Date(date + 'T00:00:00').getDay()];
+
+  const todayClasses = useMemo(() => {
+    return data.classes
+      .filter(c => c.days.includes(weekday))
+      .sort((a,b) => a.time.localeCompare(b.time));
+  }, [data.classes, weekday]);
+
+  useEffect(() => {
+    if (todayClasses.length && !todayClasses.find(c => c.id === selectedClassId)) {
+      setSelectedClassId(todayClasses[0].id);
+    }
+    if (!todayClasses.length) setSelectedClassId(null);
+  }, [todayClasses]);
+
+  const attendanceForDate = data.attendance[date] || {};
+
+  function setStatus(classId, studentId, status) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.attendance[date]) next.attendance[date] = {};
+      if (!next.attendance[date][classId]) next.attendance[date][classId] = {};
+      next.attendance[date][classId][studentId] = status;
+      return next;
+    });
+  }
+
+  // 오늘 전체 요약 계산
+  const summary = useMemo(() => {
+    let present=0, late=0, absent=0, early=0, total=0;
+    todayClasses.forEach(c => {
+      c.students.forEach(s => {
+        total++;
+        const st = attendanceForDate[c.id]?.[s.id];
+        if (st === 'present') present++;
+        else if (st === 'late') late++;
+        else if (st === 'absent') absent++;
+        else if (st === 'early') early++;
+      });
+    });
+    return { present, late, absent, early, total, unchecked: total - present - late - absent - early };
+  }, [todayClasses, attendanceForDate]);
+
+  function addClass() {
+    const name = prompt('반 이름 (예: 중3 문법반)');
+    if (!name) return;
+    const teacher = prompt('담당 강사') || '';
+    const room = prompt('강의실') || '';
+    const time = prompt('수업 시간 (예: 16:00)') || '00:00';
+    const daysInput = prompt('요일 (쉼표로 구분, 예: 월,수,금)') || '';
+    const days = daysInput.split(',').map(d => d.trim()).filter(d => DAYS.includes(d));
+    const newClass = { id: 'c' + Date.now(), name, teacher, room, time, days, students: [] };
+    setData(prev => ({ ...prev, classes: [...prev.classes, newClass] }));
+  }
+
+  function deleteClass(id) {
+    if (!confirm('이 반을 삭제하시겠습니까?')) return;
+    setData(prev => ({ ...prev, classes: prev.classes.filter(c => c.id !== id) }));
+  }
+
+  function addStudent(classId) {
+    const name = prompt('학생 이름');
+    if (!name) return;
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => c.id === classId
+        ? { ...c, students: [...c.students, { id: 's' + Date.now(), name }] }
+        : c)
+    }));
+  }
+
+  function deleteStudent(classId, studentId) {
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => c.id === classId
+        ? { ...c, students: c.students.filter(s => s.id !== studentId) }
+        : c)
+    }));
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto p-4 pb-16">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">{data.academyName}</h1>
+          <p className="text-sm text-gray-500">{date} ({weekday}요일)</p>
+        </div>
+        <input
+          type="date"
+          value={date}
+          onChange={e => setDate(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+        />
+      </div>
+
+      <div className="grid grid-cols-4 gap-2 mb-5">
+        <SummaryCard label="오늘 수업" value={todayClasses.length + '개'} tone="bg-indigo-50 text-indigo-700" />
+        <SummaryCard label="출석" value={summary.present + '명'} tone="bg-green-50 text-green-700" />
+        <SummaryCard label="결석" value={summary.absent + '명'} tone="bg-red-50 text-red-700" />
+        <SummaryCard label="미체크" value={summary.unchecked + '명'} tone="bg-gray-100 text-gray-600" />
+      </div>
+
+      <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit">
+        {[['schedule','시간표'],['attendance','출결'],['manage','반 관리']].map(([key,label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`px-4 py-1.5 text-sm rounded-md transition ${tab===key ? 'bg-white shadow-sm text-indigo-700 font-medium' : 'text-gray-500'}`}
+          >{label}</button>
+        ))}
+      </div>
+
+      {tab === 'schedule' && (
+        <div className="space-y-2">
+          {todayClasses.length === 0 && <EmptyState text="오늘 예정된 수업이 없습니다." />}
+          {todayClasses.map(c => {
+            const checked = c.students.filter(s => attendanceForDate[c.id]?.[s.id]).length;
+            return (
+              <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer"
+                   onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
+                <div className="flex items-center gap-4">
+                  <div className="text-sm font-semibold text-indigo-700 w-14">{c.time}</div>
+                  <div>
+                    <p className="font-medium text-gray-900">{c.name}</p>
+                    <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {c.students.length}명</p>
+                  </div>
+                </div>
+                <span className={`text-xs px-2 py-1 rounded-full ${checked===c.students.length && c.students.length>0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                  출결 {checked}/{c.students.length}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {tab === 'attendance' && (
+        <div>
+          {todayClasses.length === 0 ? (
+            <EmptyState text="오늘 예정된 수업이 없습니다." />
+          ) : (
+            <React.Fragment>
+              <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+                {todayClasses.map(c => (
+                  <button key={c.id} onClick={() => setSelectedClassId(c.id)}
+                    className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-sm border ${selectedClassId===c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'}`}>
+                    {c.time} {c.name}
+                  </button>
+                ))}
+              </div>
+              {selectedClassId && (
+                <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
+                  {data.classes.find(c=>c.id===selectedClassId)?.students.map(s => {
+                    const current = attendanceForDate[selectedClassId]?.[s.id];
+                    return (
+                      <div key={s.id} className="flex items-center justify-between p-3">
+                        <span className="text-sm font-medium text-gray-800">{s.name}</span>
+                        <div className="flex gap-1.5">
+                          {Object.entries(STATUS).map(([key, val]) => (
+                            <button key={key}
+                              onClick={() => setStatus(selectedClassId, s.id, key)}
+                              className={`text-xs px-2.5 py-1 rounded-full border ${current===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                              {val.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {data.classes.find(c=>c.id===selectedClassId)?.students.length === 0 && (
+                    <p className="p-4 text-sm text-gray-400">등록된 학생이 없습니다. '반 관리' 탭에서 추가해주세요.</p>
+                  )}
+                </div>
+              )}
+            </React.Fragment>
+          )}
+        </div>
+      )}
+
+      {tab === 'manage' && (
+        <div className="space-y-3">
+          <button onClick={addClass} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
+            + 새 반 추가
+          </button>
+          {data.classes.map(c => (
+            <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="font-medium text-gray-900">{c.name}</p>
+                  <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {c.time} · {c.days.join(',')}</p>
+                </div>
+                <button onClick={() => deleteClass(c.id)} className="text-xs text-red-500 hover:underline">반 삭제</button>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {c.students.map(s => (
+                  <span key={s.id} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full flex items-center gap-1">
+                    {s.name}
+                    <button onClick={() => deleteStudent(c.id, s.id)} className="text-gray-400 hover:text-red-500">×</button>
+                  </span>
+                ))}
+              </div>
+              <button onClick={() => addStudent(c.id)} className="text-xs text-indigo-600 hover:underline">+ 학생 추가</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, tone }) {
+  return (
+    <div className={`rounded-xl p-3 ${tone}`}>
+      <p className="text-xs opacity-80 mb-1">{label}</p>
+      <p className="text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function EmptyState({ text }) {
+  return <div className="text-center py-12 text-sm text-gray-400">{text}</div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

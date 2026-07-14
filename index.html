@@ -140,6 +140,22 @@ function classScheduleSummary(c) {
   return c.days.map(d => `${d} ${formatClassTimeForDay(c, d)}`).join(', ');
 }
 
+function collectDaySchedulePrompt(days, baseTime, baseEndTime, existing) {
+  const daySchedule = {};
+  if (!days.length) return daySchedule;
+  const setPerDay = confirm('요일마다 수업 시간이 다른가요? (아니오를 누르면 위에서 입력한 기본 시간이 모든 요일에 적용됩니다)');
+  if (!setPerDay) return daySchedule;
+  for (const d of days) {
+    const current = (existing && existing[d]) || { time: baseTime, endTime: baseEndTime };
+    const dTime = prompt(`${d}요일 시작 시간`, current.time) ?? current.time;
+    const dEnd = prompt(`${d}요일 종료 시간`, current.endTime || '') ?? current.endTime;
+    if (dTime !== baseTime || dEnd !== (baseEndTime || '')) {
+      daySchedule[d] = { time: dTime, endTime: dEnd };
+    }
+  }
+  return daySchedule;
+}
+
 function saveData(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -226,11 +242,12 @@ function App() {
     if (!name) return;
     const teacher = prompt('담당 강사') || '';
     const room = prompt('강의실') || '';
-    const time = prompt('시작 시간 (예: 16:00)') || '00:00';
-    const endTime = prompt('종료 시간 (예: 17:20)') || '';
+    const time = prompt('시작 시간 (기본, 예: 16:00)') || '00:00';
+    const endTime = prompt('종료 시간 (기본, 예: 17:20)') || '';
     const daysInput = prompt('요일 (쉼표로 구분, 예: 월,수,금)') || '';
     const days = daysInput.split(',').map(d => d.trim()).filter(d => DAYS.includes(d));
-    const newClass = { id: 'c' + Date.now(), name, teacher, room, time, endTime, days, students: [] };
+    const daySchedule = collectDaySchedulePrompt(days, time, endTime, null);
+    const newClass = { id: 'c' + Date.now(), name, teacher, room, time, endTime, days, daySchedule, students: [] };
     setData(prev => ({ ...prev, classes: [...prev.classes, newClass] }));
   }
 
@@ -450,52 +467,14 @@ function App() {
     if (!name) return;
     const teacher = prompt('담당 강사', cls.teacher) ?? cls.teacher;
     const room = prompt('강의실', cls.room) ?? cls.room;
-    const time = prompt('시작 시간 (예: 16:00)', cls.time) ?? cls.time;
-    const endTime = prompt('종료 시간 (예: 17:20)', cls.endTime || '') ?? cls.endTime;
+    const time = prompt('시작 시간 (기본, 예: 16:00)', cls.time) ?? cls.time;
+    const endTime = prompt('종료 시간 (기본, 예: 17:20)', cls.endTime || '') ?? cls.endTime;
     const daysInput = prompt('요일 (쉼표로 구분, 예: 월,수,금)', cls.days.join(',')) ?? cls.days.join(',');
     const days = daysInput.split(',').map(d => d.trim()).filter(d => DAYS.includes(d));
+    const daySchedule = collectDaySchedulePrompt(days, time, endTime, cls.daySchedule);
     setData(prev => ({
       ...prev,
-      classes: prev.classes.map(c => {
-        if (c.id !== classId) return c;
-        const daySchedule = { ...(c.daySchedule || {}) };
-        Object.keys(daySchedule).forEach(d => { if (!days.includes(d)) delete daySchedule[d]; });
-        return { ...c, name, teacher, room, time, endTime, days, daySchedule };
-      })
-    }));
-  }
-
-  function editDayTime(classId, day) {
-    const cls = data.classes.find(c => c.id === classId);
-    if (!cls) return;
-    const current = (cls.daySchedule && cls.daySchedule[day]) || { time: cls.time, endTime: cls.endTime || '' };
-    const timeStr = prompt(`${day}요일 시작 시간`, current.time);
-    if (!timeStr) return;
-    const endTimeStr = prompt(`${day}요일 종료 시간`, current.endTime || '') ?? current.endTime;
-    setData(prev => ({
-      ...prev,
-      classes: prev.classes.map(c => {
-        if (c.id !== classId) return c;
-        const daySchedule = { ...(c.daySchedule || {}) };
-        if (timeStr === c.time && endTimeStr === (c.endTime || '')) {
-          delete daySchedule[day];
-        } else {
-          daySchedule[day] = { time: timeStr, endTime: endTimeStr };
-        }
-        return { ...c, daySchedule };
-      })
-    }));
-  }
-
-  function resetDayTime(classId, day) {
-    setData(prev => ({
-      ...prev,
-      classes: prev.classes.map(c => {
-        if (c.id !== classId || !c.daySchedule) return c;
-        const daySchedule = { ...c.daySchedule };
-        delete daySchedule[day];
-        return { ...c, daySchedule };
-      })
+      classes: prev.classes.map(c => c.id === classId ? { ...c, name, teacher, room, time, endTime, days, daySchedule } : c)
     }));
   }
 
@@ -966,22 +945,6 @@ function App() {
                       <p className="text-xs text-gray-500">{c.teacher} · {c.room} · {classScheduleSummary(c)}</p>
                     </div>
                     <button onClick={() => editClassInfo(c.id)} className="text-xs text-indigo-600 hover:underline">정보 수정</button>
-                  </div>
-                  <p className="text-xs text-gray-500 mb-1">요일별 수업 시간</p>
-                  <div className="space-y-1 mb-2">
-                    {c.days.map(d => {
-                      const overridden = !!(c.daySchedule && c.daySchedule[d]);
-                      return (
-                        <div key={d} className="flex items-center justify-between text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
-                          <span className={overridden ? 'text-indigo-600 font-medium' : 'text-gray-700'}>{d} {formatClassTimeForDay(c, d)}</span>
-                          <span className="flex items-center gap-2">
-                            <button onClick={() => editDayTime(c.id, d)} className="text-indigo-600 hover:underline">수정</button>
-                            {overridden && <button onClick={() => resetDayTime(c.id, d)} className="text-gray-400 hover:underline">기본값</button>}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {c.days.length === 0 && <p className="text-xs text-gray-400">요일이 지정되지 않았습니다.</p>}
                   </div>
                   <div className="space-y-1">
                     {c.students.map(s => (

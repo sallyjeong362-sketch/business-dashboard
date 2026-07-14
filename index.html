@@ -645,6 +645,15 @@ function App() {
                             숙제 {entry.homework ? '완료' : '미완'}
                           </button>
                         </div>
+                        {entry.status && entry.status !== 'present' && (
+                          <input
+                            type="text"
+                            value={entry.note || ''}
+                            onChange={e => setAttendance(selectedClassId, s.id, { note: e.target.value })}
+                            placeholder="사유 (선택, 예: 감기몸살)"
+                            className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs"
+                          />
+                        )}
                       </div>
                     );
                   })}

@@ -276,6 +276,23 @@ function App() {
     });
   }
 
+  function editScore(studentId, scoreId) {
+    const sc = data.records[studentId]?.scores.find(s => s.id === scoreId);
+    if (!sc) return;
+    const label = prompt('시험 이름', sc.label);
+    if (!label) return;
+    const scoreStr = prompt('점수 (숫자만)', String(sc.score));
+    const score = parseFloat(scoreStr);
+    if (isNaN(score)) { alert('숫자로 입력해주세요.'); return; }
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const target = next.records[studentId].scores.find(s => s.id === scoreId);
+      target.label = label;
+      target.score = score;
+      return next;
+    });
+  }
+
   function addAnnouncement() {
     const title = prompt('공지 제목 (예: 8월 여름방학 특강 안내)');
     if (!title) return;
@@ -293,6 +310,19 @@ function App() {
   function deleteAnnouncement(id) {
     if (!confirm('이 공지를 삭제하시겠습니까?')) return;
     setData(prev => ({ ...prev, announcements: prev.announcements.filter(a => a.id !== id) }));
+  }
+
+  function editAnnouncement(id) {
+    const a = data.announcements.find(a => a.id === id);
+    if (!a) return;
+    const title = prompt('공지 제목', a.title);
+    if (!title) return;
+    const content = prompt('공지 내용', a.content) ?? a.content;
+    const target = prompt('대상 (학부모 / 강사 / 전체)', a.target) ?? a.target;
+    setData(prev => ({
+      ...prev,
+      announcements: prev.announcements.map(x => x.id === id ? { ...x, title, content, target } : x),
+    }));
   }
 
   function setPaymentStatus(studentId, status) {
@@ -338,6 +368,23 @@ function App() {
   function deleteCounseling(id) {
     if (!confirm('이 상담 기록을 삭제하시겠습니까?')) return;
     setData(prev => ({ ...prev, counseling: prev.counseling.filter(k => k.id !== id) }));
+  }
+
+  function editCounseling(id) {
+    const k = data.counseling.find(k => k.id === id);
+    if (!k) return;
+    const studentName = prompt('학생 이름 (또는 문의자)', k.studentName);
+    if (!studentName) return;
+    const parentName = prompt('학부모 이름 (선택)', k.parentName) ?? k.parentName;
+    const type = prompt('상담 유형 (입학상담 / 정기상담 / 민원 / 기타)', k.type) ?? k.type;
+    const cDate = prompt('상담 날짜 (YYYY-MM-DD)', k.date) ?? k.date;
+    const time = prompt('상담 시간 (예: 18:00)', k.time) ?? k.time;
+    const content = prompt('상담 내용', k.content) ?? k.content;
+    const nextAction = prompt('다음 액션 (팔로우업 계획)', k.nextAction) ?? k.nextAction;
+    setData(prev => ({
+      ...prev,
+      counseling: prev.counseling.map(x => x.id === id ? { ...x, studentName, parentName, type, date: cDate, time, content, nextAction } : x),
+    }));
   }
 
   function toggleCounselingStatus(id) {
@@ -688,6 +735,7 @@ function App() {
                         <span>{sc.label} ({sc.date})</span>
                         <span className="flex items-center gap-2">
                           {sc.score}점
+                          <button onClick={() => editScore(reportData.student.id, sc.id)} className="text-indigo-600 hover:underline">수정</button>
                           <button onClick={() => deleteScore(reportData.student.id, sc.id)} className="text-gray-400 hover:text-red-500">×</button>
                         </span>
                       </div>
@@ -742,7 +790,10 @@ function App() {
             <div key={a.id} className="bg-white border border-gray-200 rounded-xl p-4">
               <div className="flex items-start justify-between mb-1.5">
                 <p className="font-medium text-gray-900">{a.title}</p>
-                <button onClick={() => deleteAnnouncement(a.id)} className="text-xs text-gray-400 hover:text-red-500 shrink-0 ml-2">삭제</button>
+                <div className="flex items-center gap-2 shrink-0 ml-2">
+                  <button onClick={() => editAnnouncement(a.id)} className="text-xs text-indigo-600 hover:underline">수정</button>
+                  <button onClick={() => deleteAnnouncement(a.id)} className="text-xs text-gray-400 hover:text-red-500">삭제</button>
+                </div>
               </div>
               <p className="text-sm text-gray-600 mb-2">{a.content}</p>
               <div className="flex items-center gap-2 flex-wrap">
@@ -776,6 +827,7 @@ function App() {
                       onClick={() => toggleCounselingStatus(k.id)}
                       className={`text-xs px-2 py-0.5 rounded-full border ${k.status==='완료' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-yellow-50 text-yellow-700 border-yellow-300'}`}
                     >{k.status}</button>
+                    <button onClick={() => editCounseling(k.id)} className="text-xs text-indigo-600 hover:underline">수정</button>
                     <button onClick={() => deleteCounseling(k.id)} className="text-xs text-gray-400 hover:text-red-500">삭제</button>
                   </div>
                 </div>

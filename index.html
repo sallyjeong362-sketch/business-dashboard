@@ -285,11 +285,14 @@ function App() {
     const grade = prompt('학년 (예: 고1)', student.grade || '') || '';
     const parentPhone = prompt('학부모 연락처', student.parentPhone || '') || '';
     const studentPhone = prompt('학생 연락처', student.studentPhone || '') || '';
+    const enrollDate = prompt('등록일자 (YYYY-MM-DD)', student.enrollDate || '') || '';
+    const dueDayStr = prompt('매월 결제일 (일, 예: 5)', student.paymentDueDay || '') || '';
+    const paymentDueDay = dueDayStr ? parseInt(dueDayStr, 10) : '';
     const memo = prompt('메모 (특이사항 등)', student.memo || '') || '';
     setData(prev => ({
       ...prev,
       classes: prev.classes.map(c => c.id === classId
-        ? { ...c, students: c.students.map(s => s.id === studentId ? { ...s, school, grade, parentPhone, studentPhone, memo } : s) }
+        ? { ...c, students: c.students.map(s => s.id === studentId ? { ...s, school, grade, parentPhone, studentPhone, enrollDate, paymentDueDay, memo } : s) }
         : c)
     }));
   }
@@ -370,6 +373,21 @@ function App() {
       const next = JSON.parse(JSON.stringify(prev));
       if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr() };
       next.payments[studentId].status = status;
+      if (status === 'paid' && !next.payments[studentId].paidDate) {
+        next.payments[studentId].paidDate = todayStr();
+      }
+      return next;
+    });
+  }
+
+  function editPaidDate(studentId) {
+    const current = data.payments[studentId]?.paidDate || '';
+    const dateStr = prompt('결제일 (YYYY-MM-DD)', current);
+    if (dateStr === null) return;
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid' };
+      next.payments[studentId].paidDate = dateStr;
       return next;
     });
   }
@@ -680,10 +698,16 @@ function App() {
               const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', dueDate: todayStr() };
               return (
                 <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
-                  <div className="w-28">
-                    <p className="text-sm font-medium text-gray-800">{s.name}</p>
-                    <button onClick={() => editTuition(s.id)} className="text-xs text-gray-400 hover:text-indigo-600">
+                  <div className="w-36">
+                    <p className="text-sm font-medium text-gray-800">
+                      {s.name}
+                      {s.paymentDueDay && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 align-middle">매월 {s.paymentDueDay}일</span>}
+                    </p>
+                    <button onClick={() => editTuition(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
                       {p.tuition.toLocaleString()}원
+                    </button>
+                    <button onClick={() => editPaidDate(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
+                      결제일: {p.paidDate || '미체크'}
                     </button>
                   </div>
                   <div className="flex gap-1.5 flex-wrap">
@@ -721,9 +745,15 @@ function App() {
                   <div key={s.id} className="flex items-center justify-between text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
                     <div>
                       <span className="text-gray-700 font-medium">{s.name}</span>
-                      {(s.school || s.grade || s.parentPhone) && (
+                      {(s.school || s.grade || s.parentPhone || s.enrollDate || s.paymentDueDay) && (
                         <p className="text-gray-400 mt-0.5">
-                          {[s.school, s.grade, s.parentPhone].filter(Boolean).join(' · ')}
+                          {[
+                            s.school,
+                            s.grade,
+                            s.parentPhone,
+                            s.enrollDate && `등록 ${s.enrollDate}`,
+                            s.paymentDueDay && `매월 ${s.paymentDueDay}일 결제`,
+                          ].filter(Boolean).join(' · ')}
                         </p>
                       )}
                     </div>

@@ -82,9 +82,11 @@ function defaultData() {
       { id: 'k2', studentName: '신입 문의', parentName: '', type: '입학상담', date: todayStr(), time: '20:00', content: '고1 신입생 레벨테스트 및 반 배정 상담', nextAction: '레벨테스트 결과 후 반 확정', status: '예정' },
     ],
     lessonLogs: {},
+    classHomework: {},
     workLogs: [
       { id: 'w1', date: todayStr(), teacher: '김선생', category: '수업', content: '중2 내신반 3과 본문 해석 완료, 다음 시간 단어시험 예정' },
     ],
+    vocabTests: [],
   };
 }
 
@@ -101,7 +103,9 @@ function loadData() {
       if (!parsed.newsQuery) parsed.newsQuery = '수능 영어';
       if (!parsed.counseling) parsed.counseling = [];
       if (!parsed.lessonLogs) parsed.lessonLogs = {};
+      if (!parsed.classHomework) parsed.classHomework = {};
       if (!parsed.workLogs) parsed.workLogs = [];
+      if (!parsed.vocabTests) parsed.vocabTests = [];
       return parsed;
     }
   } catch (e) {}
@@ -184,6 +188,10 @@ function getLessonLog(data, date, classId) {
   return data.lessonLogs?.[date]?.[classId] || '';
 }
 
+function getClassHomework(data, date, classId) {
+  return data.classHomework?.[date]?.[classId] || '';
+}
+
 function allStudents(data) {
   const map = {};
   data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id }; }));
@@ -244,6 +252,16 @@ function App() {
       if (!next.lessonLogs[date]) next.lessonLogs[date] = {};
       if (content) next.lessonLogs[date][classId] = content;
       else delete next.lessonLogs[date][classId];
+      return next;
+    });
+  }
+
+  function setClassHomework(classId, content) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.classHomework[date]) next.classHomework[date] = {};
+      if (content) next.classHomework[date][classId] = content;
+      else delete next.classHomework[date][classId];
       return next;
     });
   }
@@ -517,6 +535,51 @@ function App() {
     }));
   }
 
+  function addVocabTest() {
+    const students = allStudents(data);
+    if (!students.length) { alert('등록된 학생이 없습니다.'); return; }
+    const studentLabel = prompt('학생 이름을 정확히 입력해주세요:\n' + students.map(s => s.name).join(', '));
+    if (!studentLabel) return;
+    const student = students.find(s => s.name === studentLabel.trim());
+    if (!student) { alert('일치하는 학생을 찾을 수 없습니다.'); return; }
+    const testType = prompt('시험 종류 (단어시험 / 문법 복습시험)', '단어시험') || '단어시험';
+    const vDate = prompt('날짜 (YYYY-MM-DD)', todayStr()) || todayStr();
+    const resultInput = prompt('결과 (pass / fail)', 'pass') || 'pass';
+    const result = resultInput.trim().toLowerCase() === 'fail' ? 'fail' : 'pass';
+    const wrongCount = parseInt(prompt('틀린 개수', '0'), 10) || 0;
+    const retest = confirm('재시험이 필요한가요?');
+    const comment = prompt('코멘트 (선택)') || '';
+    setData(prev => ({
+      ...prev,
+      vocabTests: [
+        { id: 'vt' + Date.now(), studentId: student.id, testType, date: vDate, result, wrongCount, retest, comment },
+        ...prev.vocabTests,
+      ],
+    }));
+  }
+
+  function editVocabTest(id) {
+    const v = data.vocabTests.find(v => v.id === id);
+    if (!v) return;
+    const testType = prompt('시험 종류 (단어시험 / 문법 복습시험)', v.testType) ?? v.testType;
+    const vDate = prompt('날짜 (YYYY-MM-DD)', v.date) ?? v.date;
+    const resultInput = prompt('결과 (pass / fail)', v.result) ?? v.result;
+    const result = resultInput.trim().toLowerCase() === 'fail' ? 'fail' : 'pass';
+    const wrongCountStr = prompt('틀린 개수', String(v.wrongCount));
+    const wrongCount = wrongCountStr === null ? v.wrongCount : (parseInt(wrongCountStr, 10) || 0);
+    const retest = confirm('재시험이 필요한가요?');
+    const comment = prompt('코멘트', v.comment) ?? v.comment;
+    setData(prev => ({
+      ...prev,
+      vocabTests: prev.vocabTests.map(x => x.id === id ? { ...x, testType, date: vDate, result, wrongCount, retest, comment } : x),
+    }));
+  }
+
+  function deleteVocabTest(id) {
+    if (!confirm('이 시험 기록을 삭제하시겠습니까?')) return;
+    setData(prev => ({ ...prev, vocabTests: prev.vocabTests.filter(v => v.id !== id) }));
+  }
+
   async function fetchNews() {
     if (!data.newsProxyUrl) { setNewsError('먼저 프록시 URL을 입력해주세요.'); return; }
     setNewsLoading(true);
@@ -596,6 +659,22 @@ function App() {
     return { paidCount, total: students.length, rate, totalDue, totalCollected };
   }, [data]);
 
+  const paymentAlerts = useMemo(() => {
+    const now = new Date();
+    const todayDay = now.getDate();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowDay = tomorrow.getDate();
+    const dueToday = [], dueTomorrow = [], unpaidList = [];
+    allStudents(data).forEach(s => {
+      const p = data.payments[s.id];
+      if (s.paymentDueDay === todayDay) dueToday.push(s);
+      else if (s.paymentDueDay === tomorrowDay) dueTomorrow.push(s);
+      if (p && (p.status === 'unpaid' || p.status === 'overdue')) unpaidList.push(s);
+    });
+    return { dueToday, dueTomorrow, unpaidList };
+  }, [data]);
+
   const reportData = useMemo(() => {
     if (!reportStudentId) return null;
     const students = allStudents(data);
@@ -614,7 +693,8 @@ function App() {
         if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
         attendanceDetails.push({
           date: d, status: entry.status, note: entry.note || '', hw, hwNote: entry.homeworkNote || '',
-          lesson: getLessonLog(data, d, student.classId),
+          attitude: entry.attitude || '', lesson: getLessonLog(data, d, student.classId),
+          homeworkAssigned: getClassHomework(data, d, student.classId),
         });
       }
     });
@@ -654,6 +734,34 @@ function App() {
         />
       </div>
 
+      {(paymentAlerts.dueToday.length > 0 || paymentAlerts.dueTomorrow.length > 0 || paymentAlerts.unpaidList.length > 0) && (
+        <div className="flex items-center justify-between gap-3 flex-wrap bg-yellow-50 border border-yellow-300 rounded-xl px-4 py-3 mb-5">
+          <div className="space-y-1">
+            {paymentAlerts.dueToday.length > 0 && (
+              <p className="text-xs text-gray-800 flex items-center gap-2 flex-wrap">
+                <span className="px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 font-medium">오늘 결제일</span>
+                {paymentAlerts.dueToday.map(s => s.name).join(', ')}
+              </p>
+            )}
+            {paymentAlerts.dueTomorrow.length > 0 && (
+              <p className="text-xs text-gray-800 flex items-center gap-2 flex-wrap">
+                <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">내일 결제일</span>
+                {paymentAlerts.dueTomorrow.map(s => s.name).join(', ')}
+              </p>
+            )}
+            {paymentAlerts.unpaidList.length > 0 && (
+              <p className="text-xs text-gray-800 flex items-center gap-2 flex-wrap">
+                <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">미납 {paymentAlerts.unpaidList.length}명</span>
+                {paymentAlerts.unpaidList.map(s => s.name).join(', ')}
+              </p>
+            )}
+          </div>
+          <button onClick={() => setTab('payment')} className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg border border-yellow-400 text-yellow-800 bg-white hover:bg-yellow-100">
+            수납현황 바로가기
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-5 gap-2 mb-5">
         <SummaryCard label="오늘 수업" value={todayClasses.length + '개'} tone="bg-indigo-50 text-indigo-700" />
         <SummaryCard label="출석" value={summary.present + '명'} tone="bg-green-50 text-green-700" />
@@ -663,7 +771,7 @@ function App() {
       </div>
 
       <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit flex-wrap">
-        {[['schedule','시간표'],['attendance','출결'],['payment','수납현황'],['manage','반 관리'],['report','학습리포트'],['notice','공지사항'],['counseling','상담관리'],['worklog','업무일지'],['news','교육뉴스'],['admin','관리자']].map(([key,label]) => (
+        {[['schedule','시간표'],['attendance','출결'],['payment','수납현황'],['manage','반 관리'],['report','학습리포트'],['vocabtest','단어/문법시험'],['notice','공지사항'],['counseling','상담관리'],['worklog','업무일지'],['news','교육뉴스'],['admin','관리자']].map(([key,label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -711,15 +819,27 @@ function App() {
                 ))}
               </div>
               {selectedClassId && (
-                <div className="mb-4">
-                  <label className="text-xs text-gray-500 mb-1 block">오늘 수업 내용 (진도)</label>
-                  <textarea
-                    value={getLessonLog(data, date, selectedClassId)}
-                    onChange={e => setLessonLog(selectedClassId, e.target.value)}
-                    placeholder="예: 3과 본문 해석, 단어시험 진행"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    rows={2}
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">오늘 수업 내용 (진도)</label>
+                    <textarea
+                      value={getLessonLog(data, date, selectedClassId)}
+                      onChange={e => setLessonLog(selectedClassId, e.target.value)}
+                      placeholder="예: 3과 본문 해석, 단어시험 진행"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      rows={2}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">오늘 내준 숙제</label>
+                    <textarea
+                      value={getClassHomework(data, date, selectedClassId)}
+                      onChange={e => setClassHomework(selectedClassId, e.target.value)}
+                      placeholder="예: 워크북 20~25p, 단어 30개 암기"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      rows={2}
+                    />
+                  </div>
                 </div>
               )}
               {selectedClassId && (
@@ -767,6 +887,13 @@ function App() {
                             rows={2}
                           />
                         )}
+                        <input
+                          type="text"
+                          value={entry.attitude || ''}
+                          onChange={e => setAttendance(selectedClassId, s.id, { attitude: e.target.value })}
+                          placeholder="수업 태도 (선택, 예: 집중력 좋음)"
+                          className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs opacity-90 focus:opacity-100"
+                        />
                       </div>
                     );
                   })}
@@ -920,6 +1047,8 @@ function App() {
                         {a.note && <p className="text-gray-500 mt-1">사유: {a.note}</p>}
                         {a.hwNote && <p className="text-gray-500 mt-1">숙제 후속조치: {a.hwNote}</p>}
                         {a.lesson && <p className="text-gray-700 mt-1">수업 내용: {a.lesson}</p>}
+                        {a.homeworkAssigned && <p className="text-gray-700 mt-1">내준 숙제: {a.homeworkAssigned}</p>}
+                        {a.attitude && <p className="text-gray-700 mt-1">수업 태도: {a.attitude}</p>}
                       </div>
                     ))}
                   </div>
@@ -977,6 +1106,41 @@ function App() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {tab === 'vocabtest' && (
+        <div className="space-y-3">
+          <button onClick={addVocabTest} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
+            + 시험 기록 추가
+          </button>
+          {data.vocabTests.length === 0 && <EmptyState text="등록된 시험 기록이 없습니다." />}
+          {data.vocabTests
+            .slice()
+            .sort((a,b) => b.date.localeCompare(a.date))
+            .map(v => {
+              const student = allStudents(data).find(s => s.id === v.studentId);
+              return (
+                <div key={v.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-start justify-between mb-1.5">
+                    <div>
+                      <p className="font-medium text-gray-900">{student ? `${student.name} (${student.className})` : '삭제된 학생'}</p>
+                      <p className="text-xs text-gray-500">{v.date} · {v.testType}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${v.result === 'pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {v.result === 'pass' ? '합격' : '불합격'}
+                      </span>
+                      {v.retest && <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-700 font-medium">재시험 필요</span>}
+                      <button onClick={() => editVocabTest(v.id)} className="text-xs text-indigo-600 hover:underline">수정</button>
+                      <button onClick={() => deleteVocabTest(v.id)} className="text-xs text-gray-400 hover:text-red-500">삭제</button>
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-1">틀린 개수: {v.wrongCount}개</p>
+                  {v.comment && <p className="text-sm text-gray-600">{v.comment}</p>}
+                </div>
+              );
+          })}
         </div>
       )}
 

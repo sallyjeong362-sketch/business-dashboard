@@ -1317,7 +1317,8 @@ function App() {
                     {gatewayErrorFor[s.id] && <p className="text-[11px] text-red-500 mt-0.5">{gatewayErrorFor[s.id]}</p>}
                   </div>
                   <div className="flex flex-col items-end gap-1.5">
-                    <div className="flex gap-1.5 flex-wrap justify-end">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <span className="text-[11px] font-semibold text-gray-400">수업료</span>
                       {Object.entries(PAYMENT_STATUS).map(([key, val]) => (
                         <button key={key}
                           onClick={() => setPaymentStatus(s.id, key)}
@@ -1326,12 +1327,13 @@ function App() {
                         </button>
                       ))}
                     </div>
-                    <div className="flex gap-1.5 flex-wrap justify-end">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <span className="text-[11px] font-semibold text-gray-400">교재비</span>
                       {Object.entries(BOOKFEE_STATUS).map(([key, val]) => (
                         <button key={key}
                           onClick={() => setBookFeeStatus(s.id, key)}
                           className={`text-xs px-2.5 py-1 rounded-full border ${p.bookFeeStatus===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
-                          교재비 {val.label}
+                          {val.label}
                         </button>
                       ))}
                     </div>

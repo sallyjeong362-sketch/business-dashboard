@@ -323,6 +323,15 @@ function paymentSortComparator(sortKey, payments) {
   };
 }
 
+function shiftMonth(monthKey, delta) {
+  const year = parseInt(monthKey.slice(0, 4), 10);
+  const month = parseInt(monthKey.slice(5, 7), 10) - 1;
+  const d = new Date(year, month + delta, 1);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
 function promoteGradesInData(data) {
   const next = JSON.parse(JSON.stringify(data));
   next.classes.forEach(c => c.students.forEach(s => { if (s.grade) s.grade = nextGrade(s.grade); }));
@@ -1098,6 +1107,25 @@ function App() {
       .map(g => ({ ...g, records: g.records.slice().sort((a,b) => VOCAB_TEST_TYPES.indexOf(a.testType) - VOCAB_TEST_TYPES.indexOf(b.testType)) }));
   }, [data.vocabTests]);
 
+  const [vtCalMonth, setVtCalMonth] = useState(todayStr().slice(0, 7));
+  const [vtFilterDate, setVtFilterDate] = useState(null);
+
+  const vocabByDate = useMemo(() => {
+    const m = {};
+    data.vocabTests.forEach(v => {
+      if (!v.result) return;
+      if (!m[v.date]) m[v.date] = { total: 0, fail: 0 };
+      m[v.date].total++;
+      if (v.result === 'fail') m[v.date].fail++;
+    });
+    return m;
+  }, [data.vocabTests]);
+
+  const visibleVocabTestGroups = useMemo(() => {
+    if (!vtFilterDate) return groupedVocabTests;
+    return groupedVocabTests.filter(g => g.date === vtFilterDate);
+  }, [groupedVocabTests, vtFilterDate]);
+
   function saveComment() {
     if (!reportStudentId) return;
     setData(prev => {
@@ -1811,12 +1839,23 @@ function App() {
             </React.Fragment>
           )}
 
-          <p className="text-xs text-gray-500 pt-2">전체 시험 기록</p>
+          <p className="text-xs text-gray-500 pt-2">전체 시험 기록{vtFilterDate ? ` · ${vtFilterDate}` : ''}</p>
+          <VocabTestCalendar
+            month={vtCalMonth}
+            byDate={vocabByDate}
+            selectedDate={vtFilterDate}
+            todayDateStr={todayStr()}
+            onPrev={() => setVtCalMonth(prev => shiftMonth(prev, -1))}
+            onNext={() => setVtCalMonth(prev => shiftMonth(prev, 1))}
+            onToday={() => setVtCalMonth(todayStr().slice(0, 7))}
+            onSelectDate={d => setVtFilterDate(prev => prev === d ? null : d)}
+            onClear={() => setVtFilterDate(null)}
+          />
           <button onClick={addVocabTest} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
             + 시험 기록 직접 추가
           </button>
-          {groupedVocabTests.length === 0 && <EmptyState text="채점된 시험 기록이 없습니다." />}
-          {groupedVocabTests.map(g => {
+          {visibleVocabTestGroups.length === 0 && <EmptyState text={vtFilterDate ? '해당 날짜에 채점된 시험 기록이 없습니다.' : '채점된 시험 기록이 없습니다.'} />}
+          {visibleVocabTestGroups.map(g => {
             const student = allStudents(data).find(s => s.id === g.studentId);
             return (
               <div key={g.studentId + '|' + g.date} className="bg-white border border-gray-200 rounded-xl p-4">
@@ -2134,6 +2173,57 @@ function MetricBox({ label, value }) {
 
 function EmptyState({ text }) {
   return <div className="text-center py-12 text-sm text-gray-400">{text}</div>;
+}
+
+function VocabTestCalendar({ month, byDate, selectedDate, todayDateStr, onPrev, onNext, onToday, onSelectDate, onClear }) {
+  const year = parseInt(month.slice(0, 4), 10);
+  const mo = parseInt(month.slice(5, 7), 10) - 1;
+  const startDow = new Date(year, mo, 1).getDay();
+  const daysInMonth = new Date(year, mo + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(<div key={'e' + i} />);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${month}-${String(d).padStart(2, '0')}`;
+    const info = byDate[dateStr];
+    const isSelected = dateStr === selectedDate;
+    const isToday = dateStr === todayDateStr;
+    cells.push(
+      <button
+        key={dateStr}
+        type="button"
+        disabled={!info}
+        onClick={() => onSelectDate(dateStr)}
+        className={`aspect-square rounded-lg text-xs flex flex-col items-center justify-center gap-0.5 border ${
+          isSelected ? 'border-indigo-400 bg-indigo-50 font-bold text-indigo-700' : 'border-transparent'
+        } ${info ? 'bg-gray-100 font-semibold text-gray-800 cursor-pointer hover:border-indigo-300' : 'bg-gray-50 text-gray-300'} ${isToday && !isSelected ? 'ring-1 ring-indigo-400' : ''}`}
+      >
+        <span>{d}</span>
+        {info && <span className={`w-1.5 h-1.5 rounded-full ${info.fail > 0 ? 'bg-red-500' : 'bg-green-500'}`} />}
+      </button>
+    );
+  }
+  const monthLabel = `${year}년 ${mo + 1}월`;
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-sm font-bold text-gray-900">{monthLabel}</span>
+        <div className="flex gap-1">
+          <button type="button" onClick={onPrev} className="border border-gray-300 rounded-lg px-2.5 py-1 text-xs text-gray-500 hover:border-indigo-300">‹</button>
+          <button type="button" onClick={onToday} className="border border-gray-300 rounded-lg px-2.5 py-1 text-xs text-gray-500 hover:border-indigo-300">오늘</button>
+          <button type="button" onClick={onNext} className="border border-gray-300 rounded-lg px-2.5 py-1 text-xs text-gray-500 hover:border-indigo-300">›</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {['일','월','화','수','목','금','토'].map(d => (
+          <div key={d} className="text-center text-[10px] text-gray-400 font-semibold pb-1">{d}</div>
+        ))}
+        {cells}
+      </div>
+      {selectedDate && (
+        <button type="button" onClick={onClear} className="text-xs text-indigo-600 hover:underline mt-2.5">{selectedDate} 필터 해제 ×</button>
+      )}
+    </div>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);

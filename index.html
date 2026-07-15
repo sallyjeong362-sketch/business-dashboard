@@ -34,6 +34,46 @@ const PAYMENT_STATUS = {
   unpaid:  { label: '미납', color: 'bg-orange-100 text-orange-700 border-orange-300' },
   overdue: { label: '연체', color: 'bg-red-100 text-red-700 border-red-300' },
 };
+const BOOKFEE_STATUS = {
+  paid:   { label: '완납', color: 'bg-green-100 text-green-700 border-green-300' },
+  unpaid: { label: '미납', color: 'bg-orange-100 text-orange-700 border-orange-300' },
+};
+const GRADE_ORDER = ['초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+const TAB_META = {
+  directory:   { label: '학생 전체 인적사항', pinned: true },
+  schedule:    { label: '시간표' },
+  attendance:  { label: '출결' },
+  payment:     { label: '수납현황' },
+  manage:      { label: '반 관리' },
+  report:      { label: '학습리포트' },
+  vocabtest:   { label: '단어/문법시험' },
+  notice:      { label: '공지사항' },
+  counseling:  { label: '상담관리' },
+  worklog:     { label: '업무일지' },
+  news:        { label: '교육뉴스' },
+  admin:       { label: '관리자' },
+};
+const DEFAULT_TAB_ORDER = ['directory','schedule','attendance','payment','manage','report','vocabtest','notice','counseling','worklog','news','admin'];
+
+function normalizeTabOrder(order) {
+  const seen = {};
+  const result = [];
+  (order || []).forEach(id => { if (TAB_META[id] && !seen[id]) { seen[id] = true; result.push(id); } });
+  DEFAULT_TAB_ORDER.forEach(id => { if (!seen[id]) { seen[id] = true; result.push(id); } });
+  const pinned = result.filter(id => TAB_META[id].pinned);
+  const rest = result.filter(id => !TAB_META[id].pinned);
+  return pinned.concat(rest);
+}
+
+function nextGrade(grade) {
+  const i = GRADE_ORDER.indexOf(grade);
+  if (i === -1 || i === GRADE_ORDER.length - 1) return grade;
+  return GRADE_ORDER[i + 1];
+}
+
+function currentYear() {
+  return new Date().getFullYear();
+}
 
 function todayStr() {
   const d = new Date();
@@ -51,11 +91,11 @@ function defaultData() {
     academyName: '에이스 영어학원',
     classes: [
       { id: 'c1', name: '중2 내신반', teacher: '김선생', room: '301호', time: '15:00', endTime: '16:20', days: ['월','수','금'],
-        students: [{id:'s1',name:'이서준'},{id:'s2',name:'최유나'},{id:'s3',name:'정민수'}] },
+        students: [{id:'s1',name:'이서준',grade:'중2'},{id:'s2',name:'최유나',grade:'중2'},{id:'s3',name:'정민수',grade:'중2'}] },
       { id: 'c2', name: '고1 수능독해', teacher: '박선생', room: '302호', time: '17:00', endTime: '18:20', days: ['화','목'],
-        students: [{id:'s4',name:'박하은'},{id:'s5',name:'김도윤'}] },
+        students: [{id:'s4',name:'박하은',parentPhone:'010-1234-5678',grade:'고1'},{id:'s5',name:'김도윤',grade:'고1'}] },
       { id: 'c3', name: '고3 실전모의고사', teacher: '김선생', room: '301호', time: '19:00', endTime: '20:50', days: ['월','수','금'],
-        students: [{id:'s6',name:'한지우'},{id:'s7',name:'윤서연'},{id:'s8',name:'조은우'}] },
+        students: [{id:'s6',name:'한지우',grade:'고3'},{id:'s7',name:'윤서연',grade:'고3'},{id:'s8',name:'조은우',grade:'고3'}] },
     ],
     attendance: {},
     records: {
@@ -66,18 +106,23 @@ function defaultData() {
       { id: 'a1', title: '7월 정기 모의고사 일정 안내', content: '7월 19일(토) 오전 10시, 고3 전체 대상 실전 모의고사가 진행됩니다.', target: '학부모', date: todayStr(), status: '대기', channel: '미정' },
     ],
     payments: {
-      s1: { tuition: 350000, status: 'paid', dueDate: todayStr() },
-      s2: { tuition: 350000, status: 'unpaid', dueDate: todayStr() },
-      s3: { tuition: 350000, status: 'overdue', dueDate: daysAgoStr(10) },
-      s4: { tuition: 400000, status: 'paid', dueDate: todayStr() },
-      s5: { tuition: 400000, status: 'partial', dueDate: todayStr() },
-      s6: { tuition: 450000, status: 'paid', dueDate: todayStr() },
-      s7: { tuition: 450000, status: 'unpaid', dueDate: todayStr() },
-      s8: { tuition: 450000, status: 'paid', dueDate: todayStr() },
+      s1: { tuition: 350000, status: 'paid', dueDate: todayStr(), bookFee: 45000, bookFeeStatus: 'paid' },
+      s2: { tuition: 350000, status: 'unpaid', dueDate: todayStr(), bookFee: 45000, bookFeeStatus: 'unpaid' },
+      s3: { tuition: 350000, status: 'overdue', dueDate: daysAgoStr(10), bookFee: 45000, bookFeeStatus: 'unpaid' },
+      s4: { tuition: 400000, status: 'paid', dueDate: todayStr(), bookFee: 60000, bookFeeStatus: 'paid' },
+      s5: { tuition: 400000, status: 'partial', dueDate: todayStr(), bookFee: 60000, bookFeeStatus: 'unpaid' },
+      s6: { tuition: 450000, status: 'paid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'paid' },
+      s7: { tuition: 450000, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' },
+      s8: { tuition: 450000, status: 'paid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'paid' },
     },
     newsProxyUrl: '',
     newsQuery: '수능 영어',
     alimtalkProxyUrl: '',
+    paymentGatewayProxyUrl: '',
+    autoPaymentReminderEnabled: false,
+    autoPaymentReminderLastSent: '',
+    tabOrder: DEFAULT_TAB_ORDER.slice(),
+    gradePromotionYear: currentYear(),
     counseling: [
       { id: 'k1', studentName: '박하은', parentName: '박하은 학부모', type: '정기상담', date: todayStr(), time: '18:00', content: '최근 성적 상승 관련 안내 및 다음 학기 목표 설정', nextAction: '2주 후 진도 재점검', status: '예정' },
       { id: 'k2', studentName: '신입 문의', parentName: '', type: '입학상담', date: todayStr(), time: '20:00', content: '고1 신입생 레벨테스트 및 반 배정 상담', nextAction: '레벨테스트 결과 후 반 확정', status: '예정' },
@@ -108,6 +153,16 @@ function loadData() {
       if (!parsed.classHomework) parsed.classHomework = {};
       if (!parsed.workLogs) parsed.workLogs = [];
       if (!parsed.vocabTests) parsed.vocabTests = [];
+      if (parsed.paymentGatewayProxyUrl === undefined) parsed.paymentGatewayProxyUrl = '';
+      if (parsed.autoPaymentReminderEnabled === undefined) parsed.autoPaymentReminderEnabled = false;
+      if (parsed.autoPaymentReminderLastSent === undefined) parsed.autoPaymentReminderLastSent = '';
+      parsed.tabOrder = normalizeTabOrder(parsed.tabOrder);
+      if (!parsed.gradePromotionYear) parsed.gradePromotionYear = currentYear();
+      Object.keys(parsed.payments || {}).forEach(k => {
+        const p = parsed.payments[k];
+        if (p.bookFee === undefined) p.bookFee = 0;
+        if (!p.bookFeeStatus) p.bookFeeStatus = 'unpaid';
+      });
       return parsed;
     }
   } catch (e) {}
@@ -213,6 +268,24 @@ function allStudents(data) {
   return Object.values(map);
 }
 
+function promoteGradesInData(data) {
+  const next = JSON.parse(JSON.stringify(data));
+  next.classes.forEach(c => c.students.forEach(s => { if (s.grade) s.grade = nextGrade(s.grade); }));
+  next.gradePromotionYear = currentYear();
+  return next;
+}
+
+function unpaidPhoneList(data) {
+  const phones = [];
+  allStudents(data).forEach(s => {
+    const p = data.payments[s.id];
+    if (p && (p.status === 'unpaid' || p.status === 'overdue') && s.parentPhone && !phones.includes(s.parentPhone)) {
+      phones.push(s.parentPhone);
+    }
+  });
+  return phones;
+}
+
 function App() {
   const [data, setData] = useState(loadData());
   const [tab, setTab] = useState('schedule');
@@ -229,8 +302,33 @@ function App() {
   const [noticeSendPending, setNoticeSendPending] = useState({});
   const [noticeSendError, setNoticeSendError] = useState({});
   const [manageExpanded, setManageExpanded] = useState({});
+  const [draggedTab, setDraggedTab] = useState(null);
+  const [gatewayPendingFor, setGatewayPendingFor] = useState(null);
+  const [gatewayErrorFor, setGatewayErrorFor] = useState({});
+  const [reminderSendPending, setReminderSendPending] = useState(false);
+  const [reminderSendError, setReminderSendError] = useState('');
+  const [reminderSendFlash, setReminderSendFlash] = useState('');
+  const [bulkGradeSelect, setBulkGradeSelect] = useState(GRADE_ORDER[0]);
+  const [bulkGradeAmount, setBulkGradeAmount] = useState('');
+  const [bulkGradeApplyFlash, setBulkGradeApplyFlash] = useState('');
 
   useEffect(() => { saveData(data); }, [data]);
+
+  useEffect(() => {
+    if (data.gradePromotionYear < currentYear()) {
+      setData(prev => promoteGradesInData(prev));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!data.autoPaymentReminderEnabled) return;
+    if (data.autoPaymentReminderLastSent === todayStr()) return;
+    if (!data.alimtalkProxyUrl) return;
+    const phones = unpaidPhoneList(data);
+    if (!phones.length) return;
+    sendPaymentReminders(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const weekday = DAYS[new Date(date + 'T00:00:00').getDay()];
 
@@ -348,7 +446,7 @@ function App() {
     if (!student) return;
     const school = prompt('학교', student.school || '');
     if (school === null) return;
-    const grade = prompt('학년 (예: 고1)', student.grade || '') || '';
+    const grade = prompt('학년 (' + GRADE_ORDER.join(', ') + ' 중 입력하면 매년 자동 진급됩니다)', student.grade || '') || '';
     const parentPhone = prompt('학부모 연락처', student.parentPhone || '') || '';
     const studentPhone = prompt('학생 연락처', student.studentPhone || '') || '';
     const enrollDate = prompt('등록일자 (YYYY-MM-DD)', student.enrollDate || '') || '';
@@ -490,9 +588,111 @@ function App() {
     if (isNaN(amount)) return;
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr() };
+      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
       next.payments[studentId].tuition = amount;
       return next;
+    });
+  }
+
+  function editBookFee(studentId) {
+    const current = data.payments[studentId]?.bookFee || 0;
+    const amountStr = prompt('교재비 금액 (원)', String(current));
+    const amount = parseInt(amountStr, 10);
+    if (isNaN(amount)) return;
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
+      next.payments[studentId].bookFee = amount;
+      return next;
+    });
+  }
+
+  function setBookFeeStatus(studentId, status) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
+      next.payments[studentId].bookFeeStatus = status;
+      return next;
+    });
+  }
+
+  function bulkSetTuitionByGrade(grade, amount) {
+    if (isNaN(amount) || amount < 0) { setBulkGradeApplyFlash(''); return; }
+    let count = 0;
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next.classes.forEach(c => c.students.forEach(s => {
+        if (s.grade === grade) {
+          if (!next.payments[s.id]) next.payments[s.id] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
+          next.payments[s.id].tuition = amount;
+          count++;
+        }
+      }));
+      return next;
+    });
+    setBulkGradeApplyFlash(count ? `${grade} 학생 ${count}명에게 수업료 ${amount.toLocaleString()}원을 일괄 적용했습니다.` : `${grade} 학년 학생이 없습니다.`);
+  }
+
+  function requestPayment(studentId) {
+    const s = allStudents(data).find(s => s.id === studentId);
+    const p = data.payments[studentId];
+    if (!s || !p) return;
+    if (!data.paymentGatewayProxyUrl) {
+      setGatewayErrorFor(prev => ({ ...prev, [studentId]: '결제선생 등 외부 결제창 프록시 URL이 설정되지 않았습니다. 관리자 탭에서 먼저 설정해주세요.' }));
+      return;
+    }
+    setGatewayPendingFor(studentId);
+    setGatewayErrorFor(prev => ({ ...prev, [studentId]: '' }));
+    fetch(data.paymentGatewayProxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId, studentName: s.name, phone: s.parentPhone || s.studentPhone || '',
+        tuition: p.tuition || 0, bookFee: p.bookFee || 0, amount: (p.tuition || 0) + (p.bookFee || 0),
+      }),
+    })
+      .then(res => { if (!res.ok) throw new Error('요청 실패'); return res.json(); })
+      .then(json => {
+        if (!json.success) throw new Error(json.error || '결제 요청에 실패했습니다.');
+        setData(prev => {
+          const next = JSON.parse(JSON.stringify(prev));
+          if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', bookFee: 0, bookFeeStatus: 'unpaid' };
+          next.payments[studentId].gatewayRequestedAt = todayStr();
+          return next;
+        });
+      })
+      .catch(err => setGatewayErrorFor(prev => ({ ...prev, [studentId]: err.message || '결제 요청에 실패했습니다.' })))
+      .finally(() => setGatewayPendingFor(null));
+  }
+
+  function sendPaymentReminders(manual) {
+    const phones = unpaidPhoneList(data);
+    if (!phones.length) {
+      if (manual) setReminderSendError('미납 학부모 연락처가 없습니다.');
+      return;
+    }
+    setReminderSendPending(true);
+    setReminderSendError('');
+    sendAlimtalk(data.alimtalkProxyUrl, phones, 'payment_reminder', { academyName: data.academyName, date: todayStr() })
+      .then(() => {
+        setData(prev => ({ ...prev, autoPaymentReminderLastSent: todayStr() }));
+        setReminderSendFlash(`${phones.length}명에게 미납 알림을 발송했습니다.`);
+      })
+      .catch(err => setReminderSendError(err.message || '발송에 실패했습니다.'))
+      .finally(() => setReminderSendPending(false));
+  }
+
+  function forcePromoteGrades() {
+    setData(prev => promoteGradesInData(prev));
+  }
+
+  function reorderTabs(draggedId, targetId) {
+    if (!draggedId || draggedId === targetId || TAB_META[targetId].pinned) return;
+    setData(prev => {
+      const order = prev.tabOrder.filter(id => id !== draggedId);
+      const idx = order.indexOf(targetId);
+      order.splice(idx, 0, draggedId);
+      return { ...prev, tabOrder: normalizeTabOrder(order) };
     });
   }
 
@@ -694,15 +894,16 @@ function App() {
 
   const paymentSummary = useMemo(() => {
     const students = allStudents(data);
-    let paidCount = 0, totalDue = 0, totalCollected = 0;
+    let paidCount = 0, totalDue = 0, totalCollected = 0, bookFeeCollected = 0;
     students.forEach(s => {
       const p = data.payments[s.id];
       if (!p) return;
       totalDue += p.tuition || 0;
       if (p.status === 'paid') { paidCount++; totalCollected += p.tuition || 0; }
+      if (p.bookFeeStatus === 'paid') bookFeeCollected += p.bookFee || 0;
     });
     const rate = students.length ? Math.round((paidCount / students.length) * 100) : 0;
-    return { paidCount, total: students.length, rate, totalDue, totalCollected };
+    return { paidCount, total: students.length, rate, totalDue, totalCollected, bookFeeCollected };
   }, [data]);
 
   const paymentAlerts = useMemo(() => {
@@ -862,15 +1063,55 @@ function App() {
         <SummaryCard label="오늘 상담" value={todayCounselingCount + '건'} tone="bg-purple-50 text-purple-700" />
       </div>
 
-      <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit flex-wrap">
-        {[['schedule','시간표'],['attendance','출결'],['payment','수납현황'],['manage','반 관리'],['report','학습리포트'],['vocabtest','단어/문법시험'],['notice','공지사항'],['counseling','상담관리'],['worklog','업무일지'],['news','교육뉴스'],['admin','관리자']].map(([key,label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`px-4 py-1.5 text-sm rounded-md transition ${tab===key ? 'bg-white shadow-sm text-indigo-700 font-medium' : 'text-gray-500'}`}
-          >{label}</button>
-        ))}
+      <div className="flex gap-1 mb-1 bg-gray-100 p-1 rounded-lg w-fit flex-wrap">
+        {data.tabOrder.map(key => {
+          const meta = TAB_META[key];
+          return (
+            <button
+              key={key}
+              draggable={!meta.pinned}
+              onClick={() => setTab(key)}
+              onDragStart={() => setDraggedTab(key)}
+              onDragEnd={() => setDraggedTab(null)}
+              onDragOver={e => { if (draggedTab && !meta.pinned) e.preventDefault(); }}
+              onDrop={e => { e.preventDefault(); reorderTabs(draggedTab, key); setDraggedTab(null); }}
+              className={`px-4 py-1.5 text-sm rounded-md transition ${tab===key ? 'bg-white shadow-sm text-indigo-700 font-medium' : 'text-gray-500'} ${meta.pinned ? 'font-semibold' : 'cursor-grab'}`}
+            >{meta.label}</button>
+          );
+        })}
       </div>
+      <p className="text-xs text-gray-400 mb-4">탭을 드래그하면 순서를 바꿀 수 있어요. (학생 전체 인적사항 탭은 항상 첫 번째로 고정됩니다)</p>
+
+      {tab === 'directory' && (
+        <div className="space-y-3">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <p className="text-sm text-gray-600 mb-2">
+              학년은 매년 1회(연도가 바뀔 때) 자동으로 한 단계씩 올라갑니다. 마지막 자동 진급 연도: <strong className="text-gray-900">{data.gradePromotionYear}년</strong>
+            </p>
+            <button onClick={forcePromoteGrades} className="text-xs text-indigo-600 hover:underline">지금 전체 학년 진급 적용</button>
+          </div>
+          {allStudents(data).length === 0 && <EmptyState text="등록된 학생이 없습니다. 반 관리 탭에서 학생을 추가해주세요." />}
+          <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
+            {allStudents(data)
+              .slice()
+              .sort((a,b) => a.className.localeCompare(b.className) || a.name.localeCompare(b.name))
+              .map(s => (
+                <div key={s.id} className="flex items-center justify-between text-sm px-4 py-3 flex-wrap gap-2">
+                  <div>
+                    <span className="font-medium text-gray-800">{s.name}</span>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {[s.className, s.grade, s.school, s.parentPhone].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={() => renameStudent(s.classId, s.id)} className="text-xs text-gray-500 hover:underline">이름 수정</button>
+                    <button onClick={() => editStudentInfo(s.classId, s.id)} className="text-xs text-indigo-600 hover:underline">정보 수정</button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {tab === 'schedule' && (
         <div className="space-y-2">
@@ -1001,37 +1242,99 @@ function App() {
 
       {tab === 'payment' && (
         <div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-sm font-medium text-gray-900">미납 알림문자 자동발송</p>
+                <p className="text-xs text-gray-500">
+                  대상 {paymentAlerts.unpaidList.length}명 · 자동발송 {data.autoPaymentReminderEnabled ? '켜짐' : '꺼짐'}
+                  {data.autoPaymentReminderLastSent ? ` · 마지막 발송 ${data.autoPaymentReminderLastSent}` : ''}
+                </p>
+              </div>
+              <button onClick={() => sendPaymentReminders(true)} disabled={reminderSendPending} className="text-xs text-indigo-600 hover:underline disabled:opacity-50">
+                {reminderSendPending ? '발송 중...' : '지금 알림 발송'}
+              </button>
+            </div>
+            {reminderSendError && <p className="text-xs text-red-500 mt-2">{reminderSendError}</p>}
+            {reminderSendFlash && <p className="text-xs text-green-600 mt-2">{reminderSendFlash}</p>}
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+            <p className="text-sm font-medium text-gray-900 mb-2">학년별 수업료 일괄 적용</p>
+            <div className="flex gap-2 flex-wrap items-end">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">학년</label>
+                <select value={bulkGradeSelect} onChange={e => setBulkGradeSelect(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                  {GRADE_ORDER.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">수업료 (원)</label>
+                <input type="number" min="0" value={bulkGradeAmount} onChange={e => setBulkGradeAmount(e.target.value)} placeholder="예: 400000"
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40" />
+              </div>
+              <button onClick={() => bulkSetTuitionByGrade(bulkGradeSelect, parseInt(bulkGradeAmount, 10))} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white">
+                해당 학년 전체 적용
+              </button>
+            </div>
+            {bulkGradeApplyFlash && <p className="text-xs text-indigo-600 mt-2">{bulkGradeApplyFlash}</p>}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
             <MetricBox label="수납률" value={paymentSummary.rate + '%'} />
             <MetricBox label="완납" value={paymentSummary.paidCount + ' / ' + paymentSummary.total + '명'} />
             <MetricBox label="수납액" value={paymentSummary.totalCollected.toLocaleString() + '원'} />
             <MetricBox label="매출액" value={paymentSummary.totalDue.toLocaleString() + '원'} />
+            <MetricBox label="교재비 수납액" value={paymentSummary.bookFeeCollected.toLocaleString() + '원'} />
           </div>
+
+          {!data.paymentGatewayProxyUrl && (
+            <p className="text-xs text-gray-400 mb-3">외부 결제창(결제선생 등) 연동 URL이 설정되지 않았습니다. 관리자 탭에서 설정하면 학생별로 결제 요청을 보낼 수 있습니다.</p>
+          )}
+
           <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
             {allStudents(data).map(s => {
-              const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', dueDate: todayStr() };
+              const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
               return (
                 <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
-                  <div className="w-36">
+                  <div className="w-40">
                     <p className="text-sm font-medium text-gray-800">
                       {s.name}
                       {s.paymentDueDay && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 align-middle">매월 {s.paymentDueDay}일</span>}
                     </p>
                     <button onClick={() => editTuition(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
-                      {p.tuition.toLocaleString()}원
+                      수업료 {p.tuition.toLocaleString()}원
+                    </button>
+                    <button onClick={() => editBookFee(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
+                      교재비 {(p.bookFee || 0).toLocaleString()}원
                     </button>
                     <button onClick={() => editPaidDate(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
                       결제일: {p.paidDate || '미체크'}
                     </button>
+                    <button onClick={() => requestPayment(s.id)} disabled={gatewayPendingFor === s.id} className="text-xs text-indigo-600 hover:underline block disabled:opacity-50">
+                      {gatewayPendingFor === s.id ? '요청 중...' : '외부 결제창 연동 요청'}
+                    </button>
+                    {gatewayErrorFor[s.id] && <p className="text-[11px] text-red-500 mt-0.5">{gatewayErrorFor[s.id]}</p>}
                   </div>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {Object.entries(PAYMENT_STATUS).map(([key, val]) => (
-                      <button key={key}
-                        onClick={() => setPaymentStatus(s.id, key)}
-                        className={`text-xs px-2.5 py-1 rounded-full border ${p.status===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
-                        {val.label}
-                      </button>
-                    ))}
+                  <div className="flex flex-col items-end gap-1.5">
+                    <div className="flex gap-1.5 flex-wrap justify-end">
+                      {Object.entries(PAYMENT_STATUS).map(([key, val]) => (
+                        <button key={key}
+                          onClick={() => setPaymentStatus(s.id, key)}
+                          className={`text-xs px-2.5 py-1 rounded-full border ${p.status===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                          {val.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap justify-end">
+                      {Object.entries(BOOKFEE_STATUS).map(([key, val]) => (
+                        <button key={key}
+                          onClick={() => setBookFeeStatus(s.id, key)}
+                          className={`text-xs px-2.5 py-1 rounded-full border ${p.bookFeeStatus===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                          교재비 {val.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               );
@@ -1455,6 +1758,31 @@ function App() {
                 placeholder="https://your-worker-name.your-subdomain.workers.dev"
                 className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
               />
+              <label className="flex items-center gap-2 text-xs text-gray-600 mt-3">
+                <input
+                  type="checkbox"
+                  checked={data.autoPaymentReminderEnabled}
+                  onChange={e => setData(prev => ({ ...prev, autoPaymentReminderEnabled: e.target.checked }))}
+                />
+                결제일 D-1/당일 및 미납 학생 대상 알림문자 자동발송 (대시보드를 열 때마다 하루 1회 확인 후 발송)
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium text-gray-900 mb-2">외부 결제창 연동 (결제선생 등)</p>
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-500 mb-2">
+                결제선생, 이니시스 등 실제 결제 대행사와 연동하려면 사업자 가맹 계약 및 API 키 발급을 먼저 진행한 뒤, 결제 요청을 대신 전달할 프록시 서버 주소를 아래에 입력하세요. 수납현황 탭에서 학생별로 "외부 결제창 연동 요청" 버튼을 누르면 이 프록시로 결제 요청이 전송됩니다.
+              </p>
+              <label className="text-xs text-gray-500 mb-1 block">결제 프록시 URL</label>
+              <input
+                type="text"
+                value={data.paymentGatewayProxyUrl}
+                onChange={e => setData(prev => ({ ...prev, paymentGatewayProxyUrl: e.target.value }))}
+                placeholder="https://your-worker-name.your-subdomain.workers.dev"
+                className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              />
             </div>
           </div>
 
@@ -1497,11 +1825,13 @@ function App() {
                     <th className="p-2.5">학부모 연락처</th>
                     <th className="p-2.5">수강료</th>
                     <th className="p-2.5">납부상태</th>
+                    <th className="p-2.5">교재비</th>
+                    <th className="p-2.5">교재비상태</th>
                   </tr>
                 </thead>
                 <tbody>
                   {allStudents(data).map(s => {
-                    const p = data.payments[s.id] || { tuition: 0, status: 'unpaid' };
+                    const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', bookFee: 0, bookFeeStatus: 'unpaid' };
                     return (
                       <tr key={s.id} className="border-b border-gray-50 last:border-0">
                         <td className="p-2.5 text-gray-700">{s.className}</td>
@@ -1510,6 +1840,8 @@ function App() {
                         <td className="p-2.5 text-gray-500">{s.parentPhone || '-'}</td>
                         <td className="p-2.5 text-gray-700">{(p.tuition || 0).toLocaleString()}원</td>
                         <td className="p-2.5 text-gray-700">{PAYMENT_STATUS[p.status]?.label || p.status}</td>
+                        <td className="p-2.5 text-gray-700">{(p.bookFee || 0).toLocaleString()}원</td>
+                        <td className="p-2.5 text-gray-700">{BOOKFEE_STATUS[p.bookFeeStatus]?.label || p.bookFeeStatus}</td>
                       </tr>
                     );
                   })}

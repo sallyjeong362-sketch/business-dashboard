@@ -264,8 +264,58 @@ function sendAlimtalk(proxyUrl, to, templateCode, variables) {
 
 function allStudents(data) {
   const map = {};
-  data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id }; }));
+  data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id, teacher: c.teacher }; }));
   return Object.values(map);
+}
+
+const STUDENT_SORT_OPTIONS = [
+  { key: 'name_asc', label: '이름 오름차순' },
+  { key: 'name_desc', label: '이름 내림차순' },
+  { key: 'grade', label: '학년별' },
+  { key: 'class', label: '학급별' },
+  { key: 'teacher', label: '선생님별' },
+];
+
+function studentSortComparator(sortKey) {
+  return (a, b) => {
+    switch (sortKey) {
+      case 'name_desc':
+        return b.name.localeCompare(a.name, 'ko');
+      case 'grade': {
+        let ai = GRADE_ORDER.indexOf(a.grade); if (ai === -1) ai = 999;
+        let bi = GRADE_ORDER.indexOf(b.grade); if (bi === -1) bi = 999;
+        return ai - bi || a.name.localeCompare(b.name, 'ko');
+      }
+      case 'class':
+        return (a.className || '').localeCompare(b.className || '', 'ko') || a.name.localeCompare(b.name, 'ko');
+      case 'teacher':
+        return (a.teacher || '').localeCompare(b.teacher || '', 'ko') || a.name.localeCompare(b.name, 'ko');
+      case 'name_asc':
+      default:
+        return a.name.localeCompare(b.name, 'ko');
+    }
+  };
+}
+
+const PAYMENT_SORT_OPTIONS = [
+  { key: 'paiddate_asc', label: '결제일 오름차순' },
+  { key: 'paiddate_desc', label: '결제일 내림차순' },
+  { key: 'name_asc', label: '이름 오름차순' },
+  { key: 'name_desc', label: '이름 내림차순' },
+];
+
+function paymentSortComparator(sortKey, payments) {
+  return (a, b) => {
+    if (sortKey === 'name_asc') return a.name.localeCompare(b.name, 'ko');
+    if (sortKey === 'name_desc') return b.name.localeCompare(a.name, 'ko');
+    const da = (payments[a.id] || {}).paidDate || '';
+    const db = (payments[b.id] || {}).paidDate || '';
+    if (!da && !db) return a.name.localeCompare(b.name, 'ko');
+    if (!da) return 1;
+    if (!db) return -1;
+    const cmp = da.localeCompare(db);
+    return sortKey === 'paiddate_desc' ? -cmp : cmp;
+  };
 }
 
 function promoteGradesInData(data) {
@@ -311,6 +361,9 @@ function App() {
   const [bulkGradeSelect, setBulkGradeSelect] = useState(GRADE_ORDER[0]);
   const [bulkGradeAmount, setBulkGradeAmount] = useState('');
   const [bulkGradeApplyFlash, setBulkGradeApplyFlash] = useState('');
+  const [directorySort, setDirectorySort] = useState('name_asc');
+  const [manageSort, setManageSort] = useState('name_asc');
+  const [paymentSort, setPaymentSort] = useState('name_asc');
 
   useEffect(() => { saveData(data); }, [data]);
 
@@ -1090,11 +1143,16 @@ function App() {
             </p>
             <button onClick={forcePromoteGrades} className="text-xs text-indigo-600 hover:underline">지금 전체 학년 진급 적용</button>
           </div>
+          <div className="flex justify-end">
+            <select value={directorySort} onChange={e => setDirectorySort(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+              {STUDENT_SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
           {allStudents(data).length === 0 && <EmptyState text="등록된 학생이 없습니다. 반 관리 탭에서 학생을 추가해주세요." />}
           <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
             {allStudents(data)
               .slice()
-              .sort((a,b) => a.className.localeCompare(b.className) || a.name.localeCompare(b.name))
+              .sort(studentSortComparator(directorySort))
               .map(s => (
                 <div key={s.id} className="flex items-center justify-between text-sm px-4 py-3 flex-wrap gap-2">
                   <div>
@@ -1292,8 +1350,14 @@ function App() {
             <p className="text-xs text-gray-400 mb-3">외부 결제창(결제선생 등) 연동 URL이 설정되지 않았습니다. 관리자 탭에서 설정하면 학생별로 결제 요청을 보낼 수 있습니다.</p>
           )}
 
+          <div className="flex justify-end mb-2">
+            <select value={paymentSort} onChange={e => setPaymentSort(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+              {PAYMENT_SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+
           <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {allStudents(data).map(s => {
+            {allStudents(data).slice().sort(paymentSortComparator(paymentSort, data.payments)).map(s => {
               const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
               return (
                 <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
@@ -1347,11 +1411,24 @@ function App() {
 
       {tab === 'manage' && (
         <div className="space-y-3">
+          <div className="flex justify-end">
+            <select value={manageSort} onChange={e => setManageSort(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+              {STUDENT_SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
           <button onClick={addClass} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
             + 새 반 추가
           </button>
-          {data.classes.map(c => {
+          {data.classes
+            .slice()
+            .sort((a, b) => {
+              if (manageSort === 'class') return a.name.localeCompare(b.name, 'ko');
+              if (manageSort === 'teacher') return (a.teacher || '').localeCompare(b.teacher || '', 'ko') || a.name.localeCompare(b.name, 'ko');
+              return 0;
+            })
+            .map(c => {
             const expanded = !!manageExpanded[c.id];
+            const sortedStudents = c.students.slice().sort(studentSortComparator(manageSort));
             return (
               <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4">
                 <div
@@ -1373,7 +1450,7 @@ function App() {
                 {expanded && (
                   <>
                     <div className="space-y-1.5 mt-3 mb-2">
-                      {c.students.map(s => (
+                      {sortedStudents.map(s => (
                         <div key={s.id} className="flex items-center justify-between text-xs bg-gray-50 px-2.5 py-1.5 rounded-lg">
                           <div>
                             <span className="text-gray-700 font-medium">{s.name}</span>

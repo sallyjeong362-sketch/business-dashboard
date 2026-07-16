@@ -1137,7 +1137,7 @@ function App() {
     setData(prev => ({
       ...prev,
       announcements: [
-        { id: 'a' + Date.now(), title: `${month}월 학원 일정 안내`, content, target: '학부모', date: todayStr() },
+        { id: 'a' + Date.now(), title: `${month}월 학원 일정 안내`, content, target: '학부모', date: todayStr(), calendarMonth: scheduleMonth },
         ...prev.announcements,
       ],
     }));
@@ -2140,6 +2140,35 @@ function App() {
                 </div>
               </div>
               <p className="text-sm text-gray-600 mb-2 whitespace-pre-line">{a.content}</p>
+              {a.calendarMonth && (() => {
+                const monthKey = a.calendarMonth;
+                const year = parseInt(monthKey.slice(0, 4), 10);
+                const mo = parseInt(monthKey.slice(5, 7), 10) - 1;
+                const daysInMonth = new Date(year, mo + 1, 0).getDate();
+                const byDate = {};
+                for (let d = 1; d <= daysInMonth; d++) {
+                  const ds = `${monthKey}-${String(d).padStart(2, '0')}`;
+                  const count = data.academyEvents.filter(ev => ev.startDate <= ds && ev.endDate >= ds).length;
+                  if (count) byDate[ds] = count;
+                }
+                const events = data.academyEvents
+                  .filter(ev => eventOverlapsMonth(ev, monthKey))
+                  .slice().sort((a2, b2) => a2.startDate.localeCompare(b2.startDate));
+                return (
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-2">
+                    <ScheduleCalendarGrid month={monthKey} byDate={byDate} todayDateStr={todayStr()} />
+                    {events.length > 0 && (
+                      <div className="mt-2.5 space-y-1">
+                        {events.map(ev => (
+                          <p key={ev.id} className="text-xs text-gray-700">
+                            <span className="font-bold text-indigo-700">{eventDateRangeLabel(ev)}</span> {ev.title}{ev.memo ? ` — ${ev.memo}` : ''}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">대상: {a.target}</span>
                 <span className="text-xs text-gray-400">{a.date}</span>

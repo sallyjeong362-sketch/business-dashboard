@@ -490,6 +490,9 @@ function App() {
   const [bulkGradeSelect, setBulkGradeSelect] = useState(GRADE_ORDER[0]);
   const [bulkGradeAmount, setBulkGradeAmount] = useState('');
   const [bulkGradeApplyFlash, setBulkGradeApplyFlash] = useState('');
+  const [bulkClassSelect, setBulkClassSelect] = useState('');
+  const [bulkClassAmount, setBulkClassAmount] = useState('');
+  const [bulkClassApplyFlash, setBulkClassApplyFlash] = useState('');
   const [directorySort, setDirectorySort] = useState('name_asc');
   const [manageSort, setManageSort] = useState('name_asc');
   const [paymentSort, setPaymentSort] = useState('name_asc');
@@ -845,6 +848,25 @@ function App() {
       return next;
     });
     setBulkGradeApplyFlash(count ? `${grade} 학생 ${count}명에게 수업료 ${amount.toLocaleString()}원을 일괄 적용했습니다.` : `${grade} 학년 학생이 없습니다.`);
+  }
+
+  function bulkSetTuitionByClass(classId, amount) {
+    if (isNaN(amount) || amount < 0 || !classId) { setBulkClassApplyFlash(''); return; }
+    let count = 0;
+    let className = '';
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const cls = next.classes.find(c => c.id === classId);
+      if (!cls) return prev;
+      className = cls.name;
+      cls.students.forEach(s => {
+        if (!next.payments[s.id]) next.payments[s.id] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
+        next.payments[s.id].tuition = amount;
+        count++;
+      });
+      return next;
+    });
+    setBulkClassApplyFlash(count ? `${className} 학생 ${count}명에게 수업료 ${amount.toLocaleString()}원을 일괄 적용했습니다.` : `${className} 반에 학생이 없습니다.`);
   }
 
   function requestPayment(studentId) {
@@ -1678,6 +1700,30 @@ function App() {
             </div>
             {bulkGradeApplyFlash && <p className="text-xs text-indigo-600 mt-2">{bulkGradeApplyFlash}</p>}
           </div>
+
+          {data.classes.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+              <p className="text-sm font-medium text-gray-900 mb-1">반별 수업료 일괄 적용</p>
+              <p className="text-xs text-gray-500 mb-2">같은 학년이라도 반마다 수업료가 다를 때, 특정 반 학생 전체에게 한 번에 적용할 수 있어요.</p>
+              <div className="flex gap-2 flex-wrap items-end">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">반</label>
+                  <select value={bulkClassSelect || data.classes[0].id} onChange={e => setBulkClassSelect(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                    {data.classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">수업료 (원)</label>
+                  <input type="number" min="0" value={bulkClassAmount} onChange={e => setBulkClassAmount(e.target.value)} placeholder="예: 400000"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40" />
+                </div>
+                <button onClick={() => bulkSetTuitionByClass(bulkClassSelect || data.classes[0].id, parseInt(bulkClassAmount, 10))} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white">
+                  해당 반 전체 적용
+                </button>
+              </div>
+              {bulkClassApplyFlash && <p className="text-xs text-indigo-600 mt-2">{bulkClassApplyFlash}</p>}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
             <MetricBox label="수납률" value={paymentSummary.rate + '%'} />

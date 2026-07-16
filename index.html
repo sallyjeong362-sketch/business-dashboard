@@ -2142,21 +2142,12 @@ function App() {
               <p className="text-sm text-gray-600 mb-2 whitespace-pre-line">{a.content}</p>
               {a.calendarMonth && (() => {
                 const monthKey = a.calendarMonth;
-                const year = parseInt(monthKey.slice(0, 4), 10);
-                const mo = parseInt(monthKey.slice(5, 7), 10) - 1;
-                const daysInMonth = new Date(year, mo + 1, 0).getDate();
-                const byDate = {};
-                for (let d = 1; d <= daysInMonth; d++) {
-                  const ds = `${monthKey}-${String(d).padStart(2, '0')}`;
-                  const count = data.academyEvents.filter(ev => ev.startDate <= ds && ev.endDate >= ds).length;
-                  if (count) byDate[ds] = count;
-                }
                 const events = data.academyEvents
                   .filter(ev => eventOverlapsMonth(ev, monthKey))
                   .slice().sort((a2, b2) => a2.startDate.localeCompare(b2.startDate));
                 return (
                   <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-2">
-                    <ScheduleCalendarGrid month={monthKey} byDate={byDate} todayDateStr={todayStr()} />
+                    <ScheduleCalendarGrid month={monthKey} events={data.academyEvents} todayDateStr={todayStr()} />
                     {events.length > 0 && (
                       <div className="mt-2.5 space-y-1">
                         {events.map(ev => (
@@ -2284,18 +2275,7 @@ function App() {
                 />
                 <ScheduleCalendarGrid
                   month={scheduleMonth}
-                  byDate={(() => {
-                    const year = parseInt(scheduleMonth.slice(0, 4), 10);
-                    const mo = parseInt(scheduleMonth.slice(5, 7), 10) - 1;
-                    const daysInMonth = new Date(year, mo + 1, 0).getDate();
-                    const acc = {};
-                    for (let d = 1; d <= daysInMonth; d++) {
-                      const ds = `${scheduleMonth}-${String(d).padStart(2, '0')}`;
-                      const count = data.academyEvents.filter(ev => ev.startDate <= ds && ev.endDate >= ds).length;
-                      if (count) acc[ds] = count;
-                    }
-                    return acc;
-                  })()}
+                  events={data.academyEvents}
                   todayDateStr={todayStr()}
                 />
               </div>
@@ -2653,7 +2633,7 @@ function MonthNav({ month, onPrev, onNext, onToday }) {
   );
 }
 
-function ScheduleCalendarGrid({ month, byDate, todayDateStr }) {
+function ScheduleCalendarGrid({ month, events, todayDateStr }) {
   const year = parseInt(month.slice(0, 4), 10);
   const mo = parseInt(month.slice(5, 7), 10) - 1;
   const startDow = new Date(year, mo, 1).getDay();
@@ -2662,17 +2642,44 @@ function ScheduleCalendarGrid({ month, byDate, todayDateStr }) {
   for (let i = 0; i < startDow; i++) cells.push(<div key={'e' + i} />);
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${month}-${String(d).padStart(2, '0')}`;
-    const count = byDate[dateStr];
+    const dow = (startDow + d - 1) % 7;
+    const overlapping = events.filter(ev => ev.startDate <= dateStr && ev.endDate >= dateStr);
+    const multiDay = overlapping.filter(ev => ev.startDate !== ev.endDate);
+    const singleDay = overlapping.filter(ev => ev.startDate === ev.endDate);
     const isToday = dateStr === todayDateStr;
+    let bar = null;
+    if (multiDay.length) {
+      const ev = multiDay[0];
+      const isTrueStart = dateStr === ev.startDate;
+      const isTrueEnd = dateStr === ev.endDate;
+      const bridgeLeft = !isTrueStart && dow !== 0;
+      const bridgeRight = !isTrueEnd && dow !== 6;
+      bar = (
+        <span
+          className="absolute h-[5px] rounded bg-indigo-500"
+          style={{
+            bottom: '4px',
+            left: bridgeLeft ? '-3px' : '3px',
+            right: bridgeRight ? '-3px' : '3px',
+            borderTopLeftRadius: bridgeLeft ? 0 : undefined,
+            borderBottomLeftRadius: bridgeLeft ? 0 : undefined,
+            borderTopRightRadius: bridgeRight ? 0 : undefined,
+            borderBottomRightRadius: bridgeRight ? 0 : undefined,
+            clipPath: isTrueEnd ? 'polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%)' : undefined,
+          }}
+        />
+      );
+    }
     cells.push(
       <div
         key={dateStr}
-        className={`aspect-square rounded-lg text-xs flex flex-col items-center justify-center gap-0.5 border border-transparent ${
-          count ? 'bg-gray-100 font-semibold text-gray-800' : 'bg-gray-50 text-gray-300'
+        className={`relative aspect-square rounded-lg text-xs flex flex-col items-center justify-center gap-0.5 border border-transparent ${
+          overlapping.length ? 'bg-gray-100 font-semibold text-gray-800' : 'bg-gray-50 text-gray-300'
         } ${isToday ? 'ring-1 ring-indigo-400' : ''}`}
       >
         <span>{d}</span>
-        {count > 0 && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />}
+        {singleDay.length > 0 && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />}
+        {bar}
       </div>
     );
   }

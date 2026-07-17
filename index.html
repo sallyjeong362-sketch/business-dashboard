@@ -196,6 +196,12 @@ function loadData() {
   return defaultData();
 }
 
+function csvCell(v) {
+  let s = v === null || v === undefined ? '' : String(v);
+  if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
 function stripHtml(str) {
   if (!str) return '';
   return str
@@ -1232,6 +1238,29 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
+  function downloadCSV(filename, rows) {
+    const content = '﻿' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportStudentsCSV() {
+    const students = allStudents(data).slice().sort(studentSortComparator(directorySort));
+    const header = ['반', '이름', '학년', '학교', '학부모 연락처', '학생 연락처', '등록일자', '매월 결제일', '메모'];
+    const rows = students.map(s => [
+      s.className, s.name, s.grade || '', s.school || '', s.parentPhone || '', s.studentPhone || '',
+      s.enrollDate || '', s.paymentDueDay ? `${s.paymentDueDay}일` : '', s.memo || '',
+    ]);
+    downloadCSV(`academy-students-${todayStr()}.csv`, [header, ...rows]);
+  }
+
   const paymentSummary = useMemo(() => {
     const students = allStudents(data);
     let paidCount = 0, totalDue = 0, totalCollected = 0, bookFeeCollected = 0;
@@ -1506,7 +1535,10 @@ function App() {
             </p>
             <button onClick={forcePromoteGrades} className="text-xs text-indigo-600 hover:underline">지금 전체 학년 진급 적용</button>
           </div>
-          <div className="flex justify-end">
+          <div className="flex justify-between items-center flex-wrap gap-2">
+            <button onClick={exportStudentsCSV} className="inline-flex items-center gap-1.5 border border-gray-300 rounded-lg px-3.5 py-1.5 text-sm text-gray-700 hover:border-indigo-300">
+              ⬇ 엑셀로 내보내기 (CSV)
+            </button>
             <select value={directorySort} onChange={e => setDirectorySort(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
               {STUDENT_SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>

@@ -107,15 +107,27 @@ function defaultData() {
     announcements: [
       { id: 'a1', title: '7월 정기 모의고사 일정 안내', content: '7월 19일(토) 오전 10시, 고3 전체 대상 실전 모의고사가 진행됩니다.', target: '학부모', date: todayStr(), status: '대기', channel: '미정' },
     ],
-    payments: {
-      s1: { tuition: 350000, status: 'paid', dueDate: todayStr(), bookFee: 45000, bookFeeStatus: 'paid' },
-      s2: { tuition: 350000, status: 'unpaid', dueDate: todayStr(), bookFee: 45000, bookFeeStatus: 'unpaid' },
-      s3: { tuition: 350000, status: 'overdue', dueDate: daysAgoStr(10), bookFee: 45000, bookFeeStatus: 'unpaid' },
-      s4: { tuition: 400000, status: 'paid', dueDate: todayStr(), bookFee: 60000, bookFeeStatus: 'paid' },
-      s5: { tuition: 400000, status: 'partial', dueDate: todayStr(), bookFee: 60000, bookFeeStatus: 'unpaid' },
-      s6: { tuition: 450000, status: 'paid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'paid' },
-      s7: { tuition: 450000, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' },
-      s8: { tuition: 450000, status: 'paid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'paid' },
+    paymentsByMonth: {
+      [todayStr().slice(0, 7)]: {
+        s1: { tuition: 350000, status: 'paid', paidDate: todayStr() },
+        s2: { tuition: 350000, status: 'unpaid', paidDate: null },
+        s3: { tuition: 350000, status: 'overdue', paidDate: null },
+        s4: { tuition: 400000, status: 'paid', paidDate: todayStr() },
+        s5: { tuition: 400000, status: 'partial', paidDate: null },
+        s6: { tuition: 450000, status: 'paid', paidDate: todayStr() },
+        s7: { tuition: 450000, status: 'unpaid', paidDate: null },
+        s8: { tuition: 450000, status: 'paid', paidDate: todayStr() },
+      },
+    },
+    bookFees: {
+      s1: { bookFee: 45000, bookFeeStatus: 'paid' },
+      s2: { bookFee: 45000, bookFeeStatus: 'unpaid' },
+      s3: { bookFee: 45000, bookFeeStatus: 'unpaid' },
+      s4: { bookFee: 60000, bookFeeStatus: 'paid' },
+      s5: { bookFee: 60000, bookFeeStatus: 'unpaid' },
+      s6: { bookFee: 0, bookFeeStatus: 'paid' },
+      s7: { bookFee: 0, bookFeeStatus: 'unpaid' },
+      s8: { bookFee: 0, bookFeeStatus: 'paid' },
     },
     newsProxyUrl: '',
     newsQuery: '수능 영어',
@@ -159,7 +171,6 @@ function loadData() {
       if (!parsed.records) parsed.records = {};
       if (!parsed.reports) parsed.reports = {};
       if (!parsed.announcements) parsed.announcements = [];
-      if (!parsed.payments) parsed.payments = {};
       if (parsed.newsProxyUrl === undefined) parsed.newsProxyUrl = '';
       if (!parsed.newsQuery) parsed.newsQuery = '수능 영어';
       if (parsed.alimtalkProxyUrl === undefined) parsed.alimtalkProxyUrl = '';
@@ -185,11 +196,29 @@ function loadData() {
       if (parsed.autoPaymentReminderLastSent === undefined) parsed.autoPaymentReminderLastSent = '';
       parsed.tabOrder = normalizeTabOrder(parsed.tabOrder);
       if (!parsed.gradePromotionYear) parsed.gradePromotionYear = currentYear();
-      Object.keys(parsed.payments || {}).forEach(k => {
-        const p = parsed.payments[k];
-        if (p.bookFee === undefined) p.bookFee = 0;
-        if (!p.bookFeeStatus) p.bookFeeStatus = 'unpaid';
-      });
+      // Migrate the old single-record-per-student payments map (no monthly reset) into
+      // paymentsByMonth (tuition/status/paidDate, resets each month) + bookFees (one-time,
+      // never resets). Existing data is preserved, not discarded: it becomes this month's record.
+      if (parsed.payments && !parsed.paymentsByMonth) {
+        const migratedMonthKey = todayStr().slice(0, 7);
+        parsed.paymentsByMonth = { [migratedMonthKey]: {} };
+        parsed.bookFees = {};
+        Object.keys(parsed.payments).forEach(k => {
+          const p = parsed.payments[k];
+          parsed.paymentsByMonth[migratedMonthKey][k] = {
+            tuition: p.tuition || 0,
+            status: p.status || 'unpaid',
+            paidDate: p.paidDate || null,
+          };
+          parsed.bookFees[k] = {
+            bookFee: p.bookFee === undefined ? 0 : p.bookFee,
+            bookFeeStatus: p.bookFeeStatus || 'unpaid',
+          };
+        });
+        delete parsed.payments;
+      }
+      if (!parsed.paymentsByMonth) parsed.paymentsByMonth = {};
+      if (!parsed.bookFees) parsed.bookFees = {};
       return parsed;
     }
   } catch (e) {}
@@ -331,8 +360,10 @@ function studentSortComparator(sortKey) {
 }
 
 const PAYMENT_SORT_OPTIONS = [
-  { key: 'paiddate_asc', label: '결제일 오름차순' },
-  { key: 'paiddate_desc', label: '결제일 내림차순' },
+  { key: 'duedate_asc', label: '결제일(매월) 오름차순' },
+  { key: 'duedate_desc', label: '결제일(매월) 내림차순' },
+  { key: 'paiddate_asc', label: '납부일 오름차순' },
+  { key: 'paiddate_desc', label: '납부일 내림차순' },
   { key: 'name_asc', label: '이름 오름차순' },
   { key: 'name_desc', label: '이름 내림차순' },
 ];
@@ -341,6 +372,14 @@ function paymentSortComparator(sortKey, payments) {
   return (a, b) => {
     if (sortKey === 'name_asc') return a.name.localeCompare(b.name, 'ko');
     if (sortKey === 'name_desc') return b.name.localeCompare(a.name, 'ko');
+    if (sortKey === 'duedate_asc' || sortKey === 'duedate_desc') {
+      const ra = a.paymentDueDay || 0, rb = b.paymentDueDay || 0;
+      if (!ra && !rb) return a.name.localeCompare(b.name, 'ko');
+      if (!ra) return 1;
+      if (!rb) return -1;
+      const cmp2 = ra - rb;
+      return sortKey === 'duedate_desc' ? -cmp2 : cmp2;
+    }
     const da = (payments[a.id] || {}).paidDate || '';
     const db = (payments[b.id] || {}).paidDate || '';
     if (!da && !db) return a.name.localeCompare(b.name, 'ko');
@@ -349,6 +388,95 @@ function paymentSortComparator(sortKey, payments) {
     const cmp = da.localeCompare(db);
     return sortKey === 'paiddate_desc' ? -cmp : cmp;
   };
+}
+
+// 수납현황 데이터 모델: 수업료(tuition/status/paidDate)는 매월 리셋되어야 하는 반복 항목이라
+// 월(YYYY-MM)별로 분리 저장하고(data.paymentsByMonth), 교재비(bookFee/bookFeeStatus)는 보통
+// 1회성 구매라 월과 무관하게 학생별로 하나만 유지한다(data.bookFees).
+function currentMonthKey() {
+  return todayStr().slice(0, 7);
+}
+
+function monthKeyLabel(mk) {
+  const [y, m] = mk.split('-').map(n => parseInt(n, 10));
+  return `${y}년 ${m}월`;
+}
+
+function availableMonthKeys(data) {
+  const keys = Object.keys(data.paymentsByMonth || {});
+  const cur = currentMonthKey();
+  if (!keys.includes(cur)) keys.push(cur);
+  return keys.sort().reverse();
+}
+
+function mostRecentTuitionRecord(data, studentId, beforeMonthKey) {
+  const keys = Object.keys(data.paymentsByMonth || {}).filter(k => k < beforeMonthKey).sort().reverse();
+  for (const k of keys) {
+    const rec = data.paymentsByMonth[k][studentId];
+    if (rec) return rec;
+  }
+  return null;
+}
+
+// Read-only: never mutates `data`. If this student has no record yet for this month, returns a
+// fresh unpaid default (carrying forward only the tuition amount, not paid status) — that's what
+// makes each month start fresh without needing an explicit "reset" step.
+function getTuitionRecord(data, studentId, monthKey) {
+  const existing = data.paymentsByMonth && data.paymentsByMonth[monthKey] && data.paymentsByMonth[monthKey][studentId];
+  if (existing) return existing;
+  const carried = mostRecentTuitionRecord(data, studentId, monthKey);
+  return { tuition: carried ? (carried.tuition || 0) : 0, status: 'unpaid', paidDate: null };
+}
+
+function getBookFeeRecord(data, studentId) {
+  return (data.bookFees && data.bookFees[studentId]) || { bookFee: 0, bookFeeStatus: 'unpaid' };
+}
+
+// Mutates the already-cloned `next` draft (the standard `setData(prev => { const next = ...; ... })`
+// pattern already used throughout this file), auto-vivifying this month's record on first write.
+function ensureTuitionRecord(next, studentId, monthKey) {
+  if (!next.paymentsByMonth) next.paymentsByMonth = {};
+  if (!next.paymentsByMonth[monthKey]) next.paymentsByMonth[monthKey] = {};
+  if (!next.paymentsByMonth[monthKey][studentId]) {
+    const carried = mostRecentTuitionRecord(next, studentId, monthKey);
+    next.paymentsByMonth[monthKey][studentId] = { tuition: carried ? (carried.tuition || 0) : 0, status: 'unpaid', paidDate: null };
+  }
+  return next.paymentsByMonth[monthKey][studentId];
+}
+
+function ensureBookFeeRecord(next, studentId) {
+  if (!next.bookFees) next.bookFees = {};
+  if (!next.bookFees[studentId]) next.bookFees[studentId] = { bookFee: 0, bookFeeStatus: 'unpaid' };
+  return next.bookFees[studentId];
+}
+
+// Before this month's due date arrives, an unpaid record isn't "미납(연체)" yet — it's simply not
+// due. Only the current month gets this leniency; a still-unpaid record from a past month is
+// unambiguously overdue.
+function isBeforeDueDateThisMonth(student, monthKey) {
+  if (monthKey !== currentMonthKey() || !student.paymentDueDay) return false;
+  const todayDay = parseInt(todayStr().split('-')[2], 10);
+  return todayDay < student.paymentDueDay;
+}
+
+function paymentDisplayStatus(student, monthKey, record) {
+  if (record.status !== 'unpaid') return PAYMENT_STATUS[record.status] || PAYMENT_STATUS.unpaid;
+  if (isBeforeDueDateThisMonth(student, monthKey)) return { label: '결제 예정', color: 'bg-gray-100 text-gray-500 border-gray-300' };
+  return PAYMENT_STATUS.unpaid;
+}
+
+function computePaymentSummary(data, monthKey) {
+  const students = allStudents(data);
+  let paidCount = 0, totalDue = 0, totalCollected = 0, bookFeeCollected = 0;
+  students.forEach(s => {
+    const t = getTuitionRecord(data, s.id, monthKey);
+    const b = getBookFeeRecord(data, s.id);
+    totalDue += t.tuition || 0;
+    if (t.status === 'paid') { paidCount++; totalCollected += t.tuition || 0; }
+    if (b.bookFeeStatus === 'paid') bookFeeCollected += b.bookFee || 0;
+  });
+  const rate = students.length ? Math.round((paidCount / students.length) * 100) : 0;
+  return { paidCount, total: students.length, rate, totalDue, totalCollected, bookFeeCollected };
 }
 
 function shiftMonth(monthKey, delta) {
@@ -387,9 +515,12 @@ function getVocabTest(data, studentId, dateStr, testType) {
 
 function unpaidPhoneList(data) {
   const phones = [];
+  const monthKey = currentMonthKey();
   allStudents(data).forEach(s => {
-    const p = data.payments[s.id];
-    if (p && (p.status === 'unpaid' || p.status === 'overdue') && s.parentPhone && !phones.includes(s.parentPhone)) {
+    const t = getTuitionRecord(data, s.id, monthKey);
+    // Only count as unpaid/overdue once this month's due date has actually arrived — before
+    // that, non-payment simply isn't due yet, so it shouldn't trigger reminders.
+    if ((t.status === 'unpaid' || t.status === 'overdue') && !isBeforeDueDateThisMonth(s, monthKey) && s.parentPhone && !phones.includes(s.parentPhone)) {
       phones.push(s.parentPhone);
     }
   });
@@ -502,6 +633,7 @@ function App() {
   const [directorySort, setDirectorySort] = useState('name_asc');
   const [manageSort, setManageSort] = useState('name_asc');
   const [paymentSort, setPaymentSort] = useState('name_asc');
+  const [paymentViewMonth, setPaymentViewMonth] = useState(null);
 
   useEffect(() => { saveData(data); }, [data]);
 
@@ -780,52 +912,54 @@ function App() {
       .finally(() => setNoticeSendPending(prev => ({ ...prev, [id]: false })));
   }
 
+  function activePaymentMonthKey() {
+    return paymentViewMonth || currentMonthKey();
+  }
+
   function setPaymentStatus(studentId, status) {
+    const monthKey = activePaymentMonthKey();
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr() };
-      next.payments[studentId].status = status;
-      if (status === 'paid' && !next.payments[studentId].paidDate) {
-        next.payments[studentId].paidDate = todayStr();
-      }
+      const rec = ensureTuitionRecord(next, studentId, monthKey);
+      rec.status = status;
+      if (status === 'paid' && !rec.paidDate) rec.paidDate = todayStr();
       return next;
     });
   }
 
   function editPaidDate(studentId) {
-    const current = data.payments[studentId]?.paidDate || '';
-    const dateStr = prompt('결제일 (YYYY-MM-DD)', current);
+    const monthKey = activePaymentMonthKey();
+    const current = getTuitionRecord(data, studentId, monthKey).paidDate || '';
+    const dateStr = prompt('납부일 (YYYY-MM-DD)', current);
     if (dateStr === null) return;
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid' };
-      next.payments[studentId].paidDate = dateStr;
+      ensureTuitionRecord(next, studentId, monthKey).paidDate = dateStr;
       return next;
     });
   }
 
   function editTuition(studentId) {
-    const current = data.payments[studentId]?.tuition || 0;
+    const monthKey = activePaymentMonthKey();
+    const current = getTuitionRecord(data, studentId, monthKey).tuition || 0;
     const amountStr = prompt('수강료 금액 (원)', String(current));
     const amount = parseInt(amountStr, 10);
     if (isNaN(amount)) return;
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
-      next.payments[studentId].tuition = amount;
+      ensureTuitionRecord(next, studentId, monthKey).tuition = amount;
       return next;
     });
   }
 
   function editBookFee(studentId) {
-    const current = data.payments[studentId]?.bookFee || 0;
+    const current = getBookFeeRecord(data, studentId).bookFee || 0;
     const amountStr = prompt('교재비 금액 (원)', String(current));
     const amount = parseInt(amountStr, 10);
     if (isNaN(amount)) return;
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
-      next.payments[studentId].bookFee = amount;
+      ensureBookFeeRecord(next, studentId).bookFee = amount;
       return next;
     });
   }
@@ -833,21 +967,20 @@ function App() {
   function setBookFeeStatus(studentId, status) {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
-      next.payments[studentId].bookFeeStatus = status;
+      ensureBookFeeRecord(next, studentId).bookFeeStatus = status;
       return next;
     });
   }
 
   function bulkSetTuitionByGrade(grade, amount) {
     if (isNaN(amount) || amount < 0) { setBulkGradeApplyFlash(''); return; }
+    const monthKey = activePaymentMonthKey();
     let count = 0;
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       next.classes.forEach(c => c.students.forEach(s => {
         if (s.grade === grade) {
-          if (!next.payments[s.id]) next.payments[s.id] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
-          next.payments[s.id].tuition = amount;
+          ensureTuitionRecord(next, s.id, monthKey).tuition = amount;
           count++;
         }
       }));
@@ -858,6 +991,7 @@ function App() {
 
   function bulkSetTuitionByClass(classId, amount) {
     if (isNaN(amount) || amount < 0 || !classId) { setBulkClassApplyFlash(''); return; }
+    const monthKey = activePaymentMonthKey();
     let count = 0;
     let className = '';
     setData(prev => {
@@ -866,8 +1000,7 @@ function App() {
       if (!cls) return prev;
       className = cls.name;
       cls.students.forEach(s => {
-        if (!next.payments[s.id]) next.payments[s.id] = { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
-        next.payments[s.id].tuition = amount;
+        ensureTuitionRecord(next, s.id, monthKey).tuition = amount;
         count++;
       });
       return next;
@@ -877,8 +1010,10 @@ function App() {
 
   function requestPayment(studentId) {
     const s = allStudents(data).find(s => s.id === studentId);
-    const p = data.payments[studentId];
-    if (!s || !p) return;
+    if (!s) return;
+    const monthKey = activePaymentMonthKey();
+    const t = getTuitionRecord(data, studentId, monthKey);
+    const b = getBookFeeRecord(data, studentId);
     if (!data.paymentGatewayProxyUrl) {
       setGatewayErrorFor(prev => ({ ...prev, [studentId]: '결제선생 등 외부 결제창 프록시 URL이 설정되지 않았습니다. 관리자 탭에서 먼저 설정해주세요.' }));
       return;
@@ -890,7 +1025,7 @@ function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         studentId, studentName: s.name, phone: s.parentPhone || s.studentPhone || '',
-        tuition: p.tuition || 0, bookFee: p.bookFee || 0, amount: (p.tuition || 0) + (p.bookFee || 0),
+        tuition: t.tuition || 0, bookFee: b.bookFee || 0, amount: (t.tuition || 0) + (b.bookFee || 0),
       }),
     })
       .then(res => { if (!res.ok) throw new Error('요청 실패'); return res.json(); })
@@ -898,8 +1033,7 @@ function App() {
         if (!json.success) throw new Error(json.error || '결제 요청에 실패했습니다.');
         setData(prev => {
           const next = JSON.parse(JSON.stringify(prev));
-          if (!next.payments[studentId]) next.payments[studentId] = { tuition: 0, status: 'unpaid', bookFee: 0, bookFeeStatus: 'unpaid' };
-          next.payments[studentId].gatewayRequestedAt = todayStr();
+          ensureTuitionRecord(next, studentId, monthKey).gatewayRequestedAt = todayStr();
           return next;
         });
       })
@@ -1277,7 +1411,7 @@ function App() {
     const students = allStudents(data).slice().sort(studentSortComparator(directorySort));
     const header = ['앱유저아이디', '이름', '생년월일', '지역', '성별', '연령', '구매금액', '포인트', '멤버십등급', '가입일', '최근구매일', '응모일'];
     const rows = students.map(s => {
-      const p = data.payments[s.id] || {};
+      const p = getTuitionRecord(data, s.id, currentMonthKey());
       const purchaseAmount = p.status === 'paid' ? (p.tuition || 0) : 0;
       return [
         s.id, s.name, '', '', '', '',
@@ -1288,19 +1422,9 @@ function App() {
     downloadCSV(`academy-students-membership-${todayStr()}.csv`, [header, ...rows]);
   }
 
-  const paymentSummary = useMemo(() => {
-    const students = allStudents(data);
-    let paidCount = 0, totalDue = 0, totalCollected = 0, bookFeeCollected = 0;
-    students.forEach(s => {
-      const p = data.payments[s.id];
-      if (!p) return;
-      totalDue += p.tuition || 0;
-      if (p.status === 'paid') { paidCount++; totalCollected += p.tuition || 0; }
-      if (p.bookFeeStatus === 'paid') bookFeeCollected += p.bookFee || 0;
-    });
-    const rate = students.length ? Math.round((paidCount / students.length) * 100) : 0;
-    return { paidCount, total: students.length, rate, totalDue, totalCollected, bookFeeCollected };
-  }, [data]);
+  // Always reflects the current calendar month — the dashboard-wide overview and reminder alerts
+  // are about "right now", regardless of which month an admin might be browsing in the payment tab.
+  const paymentSummary = useMemo(() => computePaymentSummary(data, currentMonthKey()), [data]);
 
   const paymentAlerts = useMemo(() => {
     const now = new Date();
@@ -1308,12 +1432,13 @@ function App() {
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowDay = tomorrow.getDate();
+    const monthKey = currentMonthKey();
     const dueToday = [], dueTomorrow = [], unpaidList = [];
     allStudents(data).forEach(s => {
-      const p = data.payments[s.id];
+      const t = getTuitionRecord(data, s.id, monthKey);
       if (s.paymentDueDay === todayDay) dueToday.push(s);
       else if (s.paymentDueDay === tomorrowDay) dueTomorrow.push(s);
-      if (p && (p.status === 'unpaid' || p.status === 'overdue')) unpaidList.push(s);
+      if ((t.status === 'unpaid' || t.status === 'overdue') && !isBeforeDueDateThisMonth(s, monthKey)) unpaidList.push(s);
     });
     return { dueToday, dueTomorrow, unpaidList };
   }, [data]);
@@ -1793,42 +1918,60 @@ function App() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
-            <MetricBox label="수납률" value={paymentSummary.rate + '%'} />
-            <MetricBox label="완납" value={paymentSummary.paidCount + ' / ' + paymentSummary.total + '명'} />
-            <MetricBox label="수납액" value={paymentSummary.totalCollected.toLocaleString() + '원'} />
-            <MetricBox label="매출액" value={paymentSummary.totalDue.toLocaleString() + '원'} />
-            <MetricBox label="교재비 수납액" value={paymentSummary.bookFeeCollected.toLocaleString() + '원'} />
-          </div>
+          {(() => {
+            const paymentMonthKey = activePaymentMonthKey();
+            const isPastMonth = paymentMonthKey !== currentMonthKey();
+            const viewSummary = computePaymentSummary(data, paymentMonthKey);
+            const monthOptions = availableMonthKeys(data);
+            return (
+              <React.Fragment>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select value={paymentMonthKey} onChange={e => setPaymentViewMonth(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                      {monthOptions.map(mk => (
+                        <option key={mk} value={mk}>{monthKeyLabel(mk)}{mk === currentMonthKey() ? ' (이번 달)' : ''}</option>
+                      ))}
+                    </select>
+                    {isPastMonth && (
+                      <span className="text-[11px] px-2 py-1 rounded-full bg-gray-100 text-gray-500">지난 달 기록 보기 · 매월 수업료 납부 현황은 달마다 새로 시작됩니다</span>
+                    )}
+                  </div>
+                  <select value={paymentSort} onChange={e => setPaymentSort(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                    {PAYMENT_SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                  </select>
+                </div>
 
-          {!data.paymentGatewayProxyUrl && (
-            <p className="text-xs text-gray-400 mb-3">외부 결제창(결제선생 등) 연동 URL이 설정되지 않았습니다. 관리자 탭에서 설정하면 학생별로 결제 요청을 보낼 수 있습니다.</p>
-          )}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+                  <MetricBox label="수납률" value={viewSummary.rate + '%'} />
+                  <MetricBox label="완납" value={viewSummary.paidCount + ' / ' + viewSummary.total + '명'} />
+                  <MetricBox label="수납액" value={viewSummary.totalCollected.toLocaleString() + '원'} />
+                  <MetricBox label="매출액" value={viewSummary.totalDue.toLocaleString() + '원'} />
+                  <MetricBox label="교재비 수납액" value={viewSummary.bookFeeCollected.toLocaleString() + '원'} />
+                </div>
 
-          <div className="flex justify-end mb-2">
-            <select value={paymentSort} onChange={e => setPaymentSort(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-              {PAYMENT_SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-            </select>
-          </div>
+                {!data.paymentGatewayProxyUrl && (
+                  <p className="text-xs text-gray-400 mb-3">외부 결제창(결제선생 등) 연동 URL이 설정되지 않았습니다. 관리자 탭에서 설정하면 학생별로 결제 요청을 보낼 수 있습니다.</p>
+                )}
 
-          <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {allStudents(data).slice().sort(paymentSortComparator(paymentSort, data.payments)).map(s => {
-              const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', dueDate: todayStr(), bookFee: 0, bookFeeStatus: 'unpaid' };
-              return (
-                <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
-                  <div className="w-40">
-                    <p className="text-sm font-medium text-gray-800">
-                      {s.name}
-                      {s.paymentDueDay && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 align-middle">매월 {s.paymentDueDay}일</span>}
-                    </p>
-                    <button onClick={() => editTuition(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
-                      수업료 {p.tuition.toLocaleString()}원
-                    </button>
-                    <button onClick={() => editBookFee(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
-                      교재비 {(p.bookFee || 0).toLocaleString()}원
-                    </button>
-                    <button onClick={() => editPaidDate(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
-                      결제일: {p.paidDate || '미체크'}
+                <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
+                  {allStudents(data).slice().sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
+                    const p = getTuitionRecord(data, s.id, paymentMonthKey);
+                    const b = getBookFeeRecord(data, s.id);
+                    return (
+                      <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
+                        <div className="w-40">
+                          <p className="text-sm font-medium text-gray-800">
+                            {s.name}
+                            {s.paymentDueDay && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 align-middle">매월 {s.paymentDueDay}일</span>}
+                          </p>
+                          <button onClick={() => editTuition(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
+                            수업료 {p.tuition.toLocaleString()}원
+                          </button>
+                          <button onClick={() => editBookFee(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
+                            교재비 {(b.bookFee || 0).toLocaleString()}원
+                          </button>
+                          <button onClick={() => editPaidDate(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
+                            납부일: {p.paidDate || '미체크'}
                     </button>
                     <button onClick={() => requestPayment(s.id)} disabled={gatewayPendingFor === s.id} className="text-xs text-indigo-600 hover:underline block disabled:opacity-50">
                       {gatewayPendingFor === s.id ? '요청 중...' : '외부 결제창 연동 요청'}
@@ -1838,20 +1981,23 @@ function App() {
                   <div className="flex flex-col items-end gap-1.5">
                     <div className="flex items-center gap-2 flex-wrap justify-end">
                       <span className="text-[11px] font-semibold text-gray-400">수업료</span>
-                      {Object.entries(PAYMENT_STATUS).map(([key, val]) => (
-                        <button key={key}
-                          onClick={() => setPaymentStatus(s.id, key)}
-                          className={`text-xs px-2.5 py-1 rounded-full border ${p.status===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
-                          {val.label}
-                        </button>
-                      ))}
+                      {Object.entries(PAYMENT_STATUS).map(([key, val]) => {
+                        const display = key === 'unpaid' ? paymentDisplayStatus(s, paymentMonthKey, { status: 'unpaid' }) : val;
+                        return (
+                          <button key={key}
+                            onClick={() => setPaymentStatus(s.id, key)}
+                            className={`text-xs px-2.5 py-1 rounded-full border ${p.status===key ? display.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                            {display.label}
+                          </button>
+                        );
+                      })}
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
                       <span className="text-[11px] font-semibold text-gray-400">교재비</span>
                       {Object.entries(BOOKFEE_STATUS).map(([key, val]) => (
                         <button key={key}
                           onClick={() => setBookFeeStatus(s.id, key)}
-                          className={`text-xs px-2.5 py-1 rounded-full border ${p.bookFeeStatus===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                          className={`text-xs px-2.5 py-1 rounded-full border ${b.bookFeeStatus===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
                           {val.label}
                         </button>
                       ))}
@@ -1859,8 +2005,11 @@ function App() {
                   </div>
                 </div>
               );
-            })}
-          </div>
+                  })}
+                </div>
+              </React.Fragment>
+            );
+          })()}
         </div>
       )}
 
@@ -2613,7 +2762,8 @@ function App() {
           </div>
 
           <div>
-            <p className="text-sm font-medium text-gray-900 mb-2">전체 데이터 한눈에 보기</p>
+            <p className="text-sm font-medium text-gray-900 mb-1">전체 데이터 한눈에 보기</p>
+            <p className="text-xs text-gray-400 mb-2">{monthKeyLabel(currentMonthKey())} 기준 납부상태입니다.</p>
             <div className="bg-white border border-gray-200 rounded-xl overflow-x-auto">
               <table className="w-full text-xs whitespace-nowrap">
                 <thead>
@@ -2630,7 +2780,10 @@ function App() {
                 </thead>
                 <tbody>
                   {allStudents(data).map(s => {
-                    const p = data.payments[s.id] || { tuition: 0, status: 'unpaid', bookFee: 0, bookFeeStatus: 'unpaid' };
+                    const monthKey = currentMonthKey();
+                    const p = getTuitionRecord(data, s.id, monthKey);
+                    const b = getBookFeeRecord(data, s.id);
+                    const payLabel = paymentDisplayStatus(s, monthKey, p).label;
                     return (
                       <tr key={s.id} className="border-b border-gray-50 last:border-0">
                         <td className="p-2.5 text-gray-700">{s.className}</td>
@@ -2638,9 +2791,9 @@ function App() {
                         <td className="p-2.5 text-gray-500">{[s.school, s.grade].filter(Boolean).join(' ') || '-'}</td>
                         <td className="p-2.5 text-gray-500">{s.parentPhone || '-'}</td>
                         <td className="p-2.5 text-gray-700">{(p.tuition || 0).toLocaleString()}원</td>
-                        <td className="p-2.5 text-gray-700">{PAYMENT_STATUS[p.status]?.label || p.status}</td>
-                        <td className="p-2.5 text-gray-700">{(p.bookFee || 0).toLocaleString()}원</td>
-                        <td className="p-2.5 text-gray-700">{BOOKFEE_STATUS[p.bookFeeStatus]?.label || p.bookFeeStatus}</td>
+                        <td className="p-2.5 text-gray-700">{payLabel}</td>
+                        <td className="p-2.5 text-gray-700">{(b.bookFee || 0).toLocaleString()}원</td>
+                        <td className="p-2.5 text-gray-700">{BOOKFEE_STATUS[b.bookFeeStatus]?.label || b.bookFeeStatus}</td>
                       </tr>
                     );
                   })}

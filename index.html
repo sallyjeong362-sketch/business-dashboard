@@ -777,6 +777,28 @@ function App() {
   const [openLessonLogClasses, setOpenLessonLogClasses] = useState({});
   const [openLessonLogTeachers, setOpenLessonLogTeachers] = useState({});
   const [editLessonLogFor, setEditLessonLogFor] = useState(null);
+  const [importText, setImportText] = useState('');
+  const [importFlash, setImportFlash] = useState('');
+  const [importError, setImportError] = useState('');
+
+  function applyImportedData(text) {
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.classes)) throw new Error('bad format');
+      // 저장소에 원본을 쓰고 loadData()로 다시 읽어, 구버전 데이터도 마이그레이션을 거치게 한다.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+      const next = loadData();
+      setData(next);
+      const studentCount = allStudents(next).length;
+      setImportError('');
+      setImportFlash(`데이터를 가져왔습니다. (반 ${next.classes.length}개, 학생 ${studentCount}명)`);
+      setImportText('');
+    } catch (e) {
+      setImportFlash('');
+      setImportError('가져오기에 실패했습니다. 내보내기한 JSON 내용을 그대로(전체) 붙여넣었는지 확인해주세요.');
+    }
+  }
+
   const [addTextbookOpenFor, setAddTextbookOpenFor] = useState(null);
   const [editTextbookEntryFor, setEditTextbookEntryFor] = useState(null);
   const [viewTextbookPhoto, setViewTextbookPhoto] = useState(null);
@@ -3380,6 +3402,49 @@ function App() {
           <button onClick={exportData} className="w-full py-2 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50">
             전체 데이터 JSON으로 내보내기
           </button>
+
+          <div>
+            <p className="text-sm font-medium text-gray-900 mb-1">데이터 가져오기 (복원)</p>
+            <p className="text-xs text-gray-500 mb-2">다른 화면에서 "JSON으로 내보내기"로 받은 데이터를 이곳으로 옮길 수 있습니다. 파일을 선택하거나 복사한 JSON 내용을 붙여넣고 가져오기를 누르세요. <strong>현재 이 화면의 데이터는 가져온 데이터로 교체됩니다.</strong></p>
+            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2.5">
+              <label className="text-xs text-indigo-600 hover:underline cursor-pointer inline-block">
+                📁 JSON 파일 선택
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={ev => {
+                    const f = ev.target.files && ev.target.files[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => applyImportedData(reader.result);
+                    reader.readAsText(f);
+                    ev.target.value = '';
+                  }}
+                />
+              </label>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">또는 JSON 내용 붙여넣기</label>
+                <textarea
+                  value={importText}
+                  onChange={e => setImportText(e.target.value)}
+                  placeholder='{"academyName": ...}'
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono"
+                  rows="4"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  const text = importText.trim();
+                  if (!text) { setImportFlash(''); setImportError('붙여넣은 내용이 없습니다. JSON 파일을 선택하거나 내용을 붙여넣어주세요.'); return; }
+                  applyImportedData(text);
+                }}
+                className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white"
+              >데이터 가져오기</button>
+              {importFlash && <p className="text-xs text-green-600">{importFlash}</p>}
+              {importError && <p className="text-xs text-red-500">{importError}</p>}
+            </div>
+          </div>
         </div>
       )}
     </div>

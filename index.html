@@ -13,10 +13,16 @@
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: #d1c9f0; border-radius: 4px; }
 
-  /* 학습리포트 인쇄: 리포트 카드만 종이에 나오게 하고 버튼류는 숨긴다 */
+  /* 학습리포트 인쇄: 리포트 카드만 종이에 나오게 하고 버튼류는 숨긴다.
+     print-color-adjust: 브라우저는 기본적으로 배경색을 인쇄하지 않아 차트 막대가
+     사라지므로, 배경색(그래프)을 강제로 출력하게 한다. */
   @media print {
     body * { visibility: hidden; }
-    #reportPrintArea, #reportPrintArea * { visibility: visible; }
+    #reportPrintArea, #reportPrintArea * {
+      visibility: visible;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
     #reportPrintArea { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; }
     #reportPrintArea .report-tools, #reportPrintArea .report-actions { display: none !important; }
   }
@@ -428,7 +434,7 @@ function buildReportStandaloneHTML(data, rd, comment) {
     return `<li style="margin-bottom:4px;">${escH(parts.join(' · '))}</li>`;
   }).join('');
   const scoreRows = rd.scores.map(sc => `<li>${escH(sc.label)} (${escH(sc.date)}): <strong>${sc.score}점</strong></li>`).join('');
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8" /><title>${escH(rd.student.name)} 학습리포트</title><style>body{font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif;max-width:720px;margin:24px auto;padding:0 16px;color:#222;}h1{font-size:20px;}h2{font-size:14px;margin:18px 0 6px;color:#555;}ul{padding-left:18px;font-size:13px;}.meta{color:#777;font-size:13px;}.metric{display:inline-block;margin-right:18px;font-size:13px;color:#555;}.metric strong{font-size:18px;color:#222;}@media print{body{margin:8px auto;}}</style></head><body><h1>${escH(data.academyName)} · ${escH(rd.student.name)} 학습리포트</h1><p class="meta">${rd.startDate} ~ ${rd.endDate} · ${escH(rd.student.className)}${rd.student.parentPhone ? ' · 학부모 연락처: ' + escH(rd.student.parentPhone) : ''}</p><p><span class="metric">출석률 <strong>${rd.attendanceRate !== null ? rd.attendanceRate + '%' : '기록없음'}</strong></span><span class="metric">숙제 제출률 <strong>${rd.homeworkRate !== null ? rd.homeworkRate + '%' : '기록없음'}</strong></span><span class="metric">최근 점수 <strong>${rd.scores[0] ? rd.scores[0].score + '점' : '기록없음'}</strong></span></p><h2>출결 현황 (${attTotal}회 기록)</h2>${attRows}<h2>숙제 제출 (${hwTotal}회 기록)</h2>${hwRows}${details ? '<h2>출결 상세</h2><ul>' + details + '</ul>' : ''}${scoreRows ? '<h2>최근 시험 기록</h2><ul>' + scoreRows + '</ul>' : ''}${comment ? '<h2>담당 강사 코멘트</h2><p style="font-size:13px;">' + escH(comment) + '</p>' : ''}<scr` + `ipt>window.addEventListener("load",function(){window.print();});</scr` + `ipt></body></html>`;
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8" /><title>${escH(rd.student.name)} 학습리포트</title><style>*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}body{font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif;max-width:720px;margin:24px auto;padding:0 16px;color:#222;}h1{font-size:20px;}h2{font-size:14px;margin:18px 0 6px;color:#555;}ul{padding-left:18px;font-size:13px;}.meta{color:#777;font-size:13px;}.metric{display:inline-block;margin-right:18px;font-size:13px;color:#555;}.metric strong{font-size:18px;color:#222;}@media print{body{margin:8px auto;}}</style></head><body><h1>${escH(data.academyName)} · ${escH(rd.student.name)} 학습리포트</h1><p class="meta">${rd.startDate} ~ ${rd.endDate} · ${escH(rd.student.className)}${rd.student.parentPhone ? ' · 학부모 연락처: ' + escH(rd.student.parentPhone) : ''}</p><p><span class="metric">출석률 <strong>${rd.attendanceRate !== null ? rd.attendanceRate + '%' : '기록없음'}</strong></span><span class="metric">숙제 제출률 <strong>${rd.homeworkRate !== null ? rd.homeworkRate + '%' : '기록없음'}</strong></span><span class="metric">최근 점수 <strong>${rd.scores[0] ? rd.scores[0].score + '점' : '기록없음'}</strong></span></p><h2>출결 현황 (${attTotal}회 기록)</h2>${attRows}<h2>숙제 제출 (${hwTotal}회 기록)</h2>${hwRows}${details ? '<h2>출결 상세</h2><ul>' + details + '</ul>' : ''}${scoreRows ? '<h2>최근 시험 기록</h2><ul>' + scoreRows + '</ul>' : ''}${comment ? '<h2>담당 강사 코멘트</h2><p style="font-size:13px;">' + escH(comment) + '</p>' : ''}<scr` + `ipt>window.addEventListener("load",function(){window.print();});</scr` + `ipt></body></html>`;
 }
 
 // 선생님별 폴더 색상: Tailwind 팔레트를 순환 사용해 폴더/반 카드를 구분한다.

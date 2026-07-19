@@ -12,6 +12,14 @@
   body { font-family: -apple-system, BlinkMacSystemFont, 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: #d1c9f0; border-radius: 4px; }
+
+  /* 학습리포트 인쇄: 리포트 카드만 종이에 나오게 하고 버튼류는 숨긴다 */
+  @media print {
+    body * { visibility: hidden; }
+    #reportPrintArea, #reportPrintArea * { visibility: visible; }
+    #reportPrintArea { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; }
+    #reportPrintArea .report-tools, #reportPrintArea .report-actions { display: none !important; }
+  }
 </style>
 </head>
 <body class="bg-gray-50">
@@ -358,6 +366,71 @@ function lessonLogEntriesByTeacher(data) {
   return byTeacher;
 }
 
+// 리포트 차트 색상: dataviz 검증기를 통과한 상태 팔레트(각 막대가 자체 텍스트 라벨을
+// 가진 별도 행이라 색상 인접 문제가 없고, 의미는 색이 아니라 라벨이 전달한다).
+const REPORT_STATUS_BARS = [
+  { key: 'present', label: '출석', color: '#0ca30c' },
+  { key: 'late', label: '지각', color: '#fab219' },
+  { key: 'early', label: '조퇴', color: '#ec835a' },
+  { key: 'absent', label: '결석', color: '#d03b3b' },
+];
+const REPORT_HW_BARS = [
+  { key: 'done', label: '완료', color: '#0ca30c' },
+  { key: 'missing', label: '미완', color: '#fab219' },
+];
+
+function ReportBarRow({ label, count, total, color }) {
+  const pct = total ? Math.round((count / total) * 100) : 0;
+  return (
+    <div className="flex items-center gap-2 mt-1.5" title={`${label} ${count}회 (${pct}%)`}>
+      <span className="w-11 text-xs text-gray-500 shrink-0">{label}</span>
+      <div className="flex-1 bg-gray-100 rounded h-3.5 overflow-hidden">
+        {count > 0 && <div className="h-full rounded-r" style={{ width: `${Math.max(pct, 3)}%`, background: color }} />}
+      </div>
+      <span className="w-20 text-xs text-right shrink-0">{count}회 · {pct}%</span>
+    </div>
+  );
+}
+
+function buildReportSummaryText(data, rd, comment) {
+  const att = rd.statusCounts, hw = rd.hwCounts;
+  const attTotal = att.present + att.late + att.early + att.absent;
+  const hwTotal = hw.done + hw.missing;
+  const lines = [];
+  lines.push(`[${data.academyName}] ${rd.student.name} 학습리포트 (${rd.startDate} ~ ${rd.endDate})`);
+  if (attTotal) lines.push(`출결: 출석 ${att.present}회, 지각 ${att.late}회, 조퇴 ${att.early}회, 결석 ${att.absent}회` + (rd.attendanceRate !== null ? ` (출석률 ${rd.attendanceRate}%)` : ''));
+  if (hwTotal) lines.push(`숙제: 완료 ${hw.done}회, 미완 ${hw.missing}회` + (rd.homeworkRate !== null ? ` (제출률 ${rd.homeworkRate}%)` : ''));
+  if (rd.scores.length) lines.push('최근 시험: ' + rd.scores.map(sc => `${sc.label} ${sc.score}점`).join(', '));
+  if (comment) lines.push('강사 코멘트: ' + comment);
+  return lines.join('\n');
+}
+
+// 다운로드용 독립 리포트 파일: 열면 인쇄 대화상자가 자동으로 떠서 바로 PDF로 저장할 수 있다.
+function buildReportStandaloneHTML(data, rd, comment) {
+  const att = rd.statusCounts, hw = rd.hwCounts;
+  const attTotal = att.present + att.late + att.early + att.absent;
+  const hwTotal = hw.done + hw.missing;
+  const escH = s => String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const barRow = (label, count, total, color) => {
+    const pct = total ? Math.round((count / total) * 100) : 0;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;"><span style="width:44px;font-size:12px;color:#777;">${escH(label)}</span><div style="flex:1;background:#f0f0f0;border-radius:4px;height:14px;overflow:hidden;">${count ? `<div style="width:${Math.max(pct, 3)}%;height:100%;background:${color};border-radius:0 4px 4px 0;"></div>` : ''}</div><span style="width:82px;font-size:12px;text-align:right;">${count}회 · ${pct}%</span></div>`;
+  };
+  const attRows = attTotal ? REPORT_STATUS_BARS.map(b => barRow(b.label, att[b.key], attTotal, b.color)).join('') : '<p style="color:#999;font-size:12px;">기간 내 출결 기록이 없습니다.</p>';
+  const hwRows = hwTotal ? REPORT_HW_BARS.map(b => barRow(b.label, hw[b.key], hwTotal, b.color)).join('') : '<p style="color:#999;font-size:12px;">기간 내 숙제 기록이 없습니다.</p>';
+  const details = rd.attendanceDetails.map(a => {
+    const st = STATUS[a.status];
+    const parts = [`${a.date} — ${st.label}`];
+    if (a.hw) parts.push(`숙제 ${a.hw === 'done' ? '완료' : '미완'}`);
+    if (a.note) parts.push(`사유: ${a.note}`);
+    if (a.lesson) parts.push(`수업: ${a.lesson}`);
+    if (a.homeworkAssigned) parts.push(`내준 숙제: ${a.homeworkAssigned}`);
+    if (a.attitude) parts.push(`태도: ${a.attitude}`);
+    return `<li style="margin-bottom:4px;">${escH(parts.join(' · '))}</li>`;
+  }).join('');
+  const scoreRows = rd.scores.map(sc => `<li>${escH(sc.label)} (${escH(sc.date)}): <strong>${sc.score}점</strong></li>`).join('');
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8" /><title>${escH(rd.student.name)} 학습리포트</title><style>body{font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif;max-width:720px;margin:24px auto;padding:0 16px;color:#222;}h1{font-size:20px;}h2{font-size:14px;margin:18px 0 6px;color:#555;}ul{padding-left:18px;font-size:13px;}.meta{color:#777;font-size:13px;}.metric{display:inline-block;margin-right:18px;font-size:13px;color:#555;}.metric strong{font-size:18px;color:#222;}@media print{body{margin:8px auto;}}</style></head><body><h1>${escH(data.academyName)} · ${escH(rd.student.name)} 학습리포트</h1><p class="meta">${rd.startDate} ~ ${rd.endDate} · ${escH(rd.student.className)}${rd.student.parentPhone ? ' · 학부모 연락처: ' + escH(rd.student.parentPhone) : ''}</p><p><span class="metric">출석률 <strong>${rd.attendanceRate !== null ? rd.attendanceRate + '%' : '기록없음'}</strong></span><span class="metric">숙제 제출률 <strong>${rd.homeworkRate !== null ? rd.homeworkRate + '%' : '기록없음'}</strong></span><span class="metric">최근 점수 <strong>${rd.scores[0] ? rd.scores[0].score + '점' : '기록없음'}</strong></span></p><h2>출결 현황 (${attTotal}회 기록)</h2>${attRows}<h2>숙제 제출 (${hwTotal}회 기록)</h2>${hwRows}${details ? '<h2>출결 상세</h2><ul>' + details + '</ul>' : ''}${scoreRows ? '<h2>최근 시험 기록</h2><ul>' + scoreRows + '</ul>' : ''}${comment ? '<h2>담당 강사 코멘트</h2><p style="font-size:13px;">' + escH(comment) + '</p>' : ''}<scr` + `ipt>window.addEventListener("load",function(){window.print();});</scr` + `ipt></body></html>`;
+}
+
 // 선생님별 폴더 색상: Tailwind 팔레트를 순환 사용해 폴더/반 카드를 구분한다.
 const LESSON_TONE_CYCLE = [
   { border: 'border-l-indigo-500', bg: 'bg-indigo-50/60', text: 'text-indigo-700' },
@@ -665,6 +738,10 @@ function App() {
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [date, setDate] = useState(todayStr());
   const [reportStudentId, setReportStudentId] = useState(null);
+  const [reportStartDate, setReportStartDate] = useState(daysAgoStr(6));
+  const [reportEndDate, setReportEndDate] = useState(todayStr());
+  const [reportSearch, setReportSearch] = useState('');
+  const [reportCopyFlash, setReportCopyFlash] = useState('');
   const [comment, setComment] = useState('');
   const [newsItems, setNewsItems] = useState([]);
   const [newsLoading, setNewsLoading] = useState(false);
@@ -1619,13 +1696,29 @@ function App() {
     const student = students.find(s => s.id === reportStudentId);
     if (!student) return null;
 
-    const rangeDates = Array.from({length:7}, (_,i) => daysAgoStr(6-i));
+    let start = reportStartDate || daysAgoStr(6);
+    let end = reportEndDate || todayStr();
+    if (start > end) { const tmp = start; start = end; end = tmp; }
+    const rangeDates = [];
+    {
+      const cur = new Date(start + 'T00:00:00');
+      const endD = new Date(end + 'T00:00:00');
+      let guard = 0;
+      while (cur <= endD && guard < 370) {
+        const tz = cur.getTimezoneOffset() * 60000;
+        rangeDates.push(new Date(cur - tz).toISOString().slice(0, 10));
+        cur.setDate(cur.getDate() + 1);
+        guard++;
+      }
+    }
     let attCount=0, presentCount=0, hwTotal=0, hwDone=0;
+    const statusCounts = { present: 0, late: 0, early: 0, absent: 0 };
     const attendanceDetails = [];
     rangeDates.forEach(d => {
       const entry = getAttendanceEntry(data, d, student.classId, student.id);
       if (entry && entry.status) {
         attCount++;
+        if (statusCounts[entry.status] !== undefined) statusCounts[entry.status]++;
         if (entry.status === 'present' || entry.status === 'late') presentCount++;
         const hw = normalizeHomework(entry);
         if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
@@ -1639,6 +1732,7 @@ function App() {
     attendanceDetails.reverse();
     const attendanceRate = attCount ? Math.round((presentCount/attCount)*100) : null;
     const homeworkRate = hwTotal ? Math.round((hwDone/hwTotal)*100) : null;
+    const hwCounts = { done: hwDone, missing: hwTotal - hwDone };
 
     const scores = (data.records[student.id]?.scores || []).slice(-3).reverse();
 
@@ -1663,8 +1757,8 @@ function App() {
       .slice(0, 10);
     vocabTestHistory.forEach(g => g.tests.sort((a,b) => VOCAB_TEST_TYPES.indexOf(a.testType) - VOCAB_TEST_TYPES.indexOf(b.testType)));
 
-    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal, attendanceDetails, homeworkHistory, vocabTestHistory };
-  }, [reportStudentId, data]);
+    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal, attendanceDetails, homeworkHistory, vocabTestHistory, statusCounts, hwCounts, startDate: start, endDate: end };
+  }, [reportStudentId, data, reportStartDate, reportEndDate]);
 
   const groupedVocabTests = useMemo(() => {
     const groups = {};
@@ -2368,18 +2462,78 @@ function App() {
 
       {tab === 'report' && (
         <div>
-          <select
-            value={reportStudentId || ''}
-            onChange={e => { setReportStudentId(e.target.value); setReportSendSuccessFlash(false); setReportSendError(''); }}
-            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm mb-4"
-          >
-            {allStudents(data).map(s => (
-              <option key={s.id} value={s.id}>{s.name} ({s.className})</option>
-            ))}
-          </select>
+          {(() => {
+            const q = reportSearch.trim();
+            const filtered = q ? allStudents(data).filter(s => s.name.includes(q)) : allStudents(data);
+            const visible = filtered.length ? filtered : allStudents(data);
+            if (visible.length && !visible.some(s => s.id === reportStudentId)) {
+              setTimeout(() => setReportStudentId(visible[0].id), 0);
+            }
+            return (
+              <div className="flex items-end gap-2.5 flex-wrap mb-4">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">학생 검색</label>
+                  <input type="text" value={reportSearch} onChange={e => setReportSearch(e.target.value)} placeholder="이름으로 검색"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-32" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">학생 선택</label>
+                  <select
+                    value={reportStudentId || ''}
+                    onChange={e => { setReportStudentId(e.target.value); setReportSendSuccessFlash(false); setReportSendError(''); setReportCopyFlash(''); }}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                  >
+                    {visible.map(s => (
+                      <option key={s.id} value={s.id}>{s.name} ({s.className})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">시작일</label>
+                  <input type="date" value={reportStartDate} onChange={e => setReportStartDate(e.target.value || daysAgoStr(6))}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">종료일</label>
+                  <input type="date" value={reportEndDate} onChange={e => setReportEndDate(e.target.value || todayStr())}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+                <button onClick={() => { setReportStartDate(daysAgoStr(6)); setReportEndDate(todayStr()); }}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-600">최근 7일</button>
+                <button onClick={() => { setReportStartDate(daysAgoStr(29)); setReportEndDate(todayStr()); }}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-600">최근 30일</button>
+              </div>
+            );
+          })()}
 
           {reportData && (
-            <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className="bg-white border border-gray-200 rounded-xl p-5" id="reportPrintArea">
+              <div className="report-tools flex gap-2 flex-wrap mb-4">
+                <button onClick={() => window.print()} className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300">🖨 인쇄 / PDF 저장</button>
+                <a
+                  href={'data:text/html;charset=utf-8,' + encodeURIComponent(buildReportStandaloneHTML(data, reportData, comment))}
+                  download={`academy-report-${reportData.student.id}-${reportData.startDate}-${reportData.endDate}.html`}
+                  className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300"
+                >📄 리포트 파일 저장</a>
+                {reportData.student.parentPhone && (
+                  <a
+                    href={'sms:' + reportData.student.parentPhone.replace(/[^0-9+]/g, '') + '?body=' + encodeURIComponent(buildReportSummaryText(data, reportData, comment))}
+                    className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300"
+                  >📱 문자로 발송</a>
+                )}
+                <button
+                  onClick={() => {
+                    const text = buildReportSummaryText(data, reportData, comment);
+                    const done = ok => setReportCopyFlash(ok ? '리포트 내용을 복사했습니다. 카카오톡·문자 등에 붙여넣어 학부모님께 보내세요.' : '자동 복사에 실패했습니다.');
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(false));
+                    } else done(false);
+                  }}
+                  className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300"
+                >📋 내용 복사</button>
+              </div>
+              {reportCopyFlash && <p className="text-xs text-green-600 mb-3">{reportCopyFlash}</p>}
+
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-sm font-medium text-indigo-700">
@@ -2387,7 +2541,7 @@ function App() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-900">{reportData.student.name} 학습리포트</p>
-                    <p className="text-xs text-gray-500">{daysAgoStr(6)} ~ {todayStr()} · {reportData.student.className}</p>
+                    <p className="text-xs text-gray-500">{reportData.startDate} ~ {reportData.endDate} · {reportData.student.className}</p>
                     {reportData.student.parentPhone && (
                       <p className="text-xs text-gray-400">학부모 연락처: {reportData.student.parentPhone}</p>
                     )}
@@ -2397,6 +2551,28 @@ function App() {
                   {data.alimtalkProxyUrl ? '알림톡 연동됨' : '알림톡 미설정'}
                 </span>
               </div>
+
+              {(() => {
+                const att = reportData.statusCounts, hw = reportData.hwCounts;
+                const attTotal = att.present + att.late + att.early + att.absent;
+                const hwTotal = hw.done + hw.missing;
+                return (
+                  <div id="reportChartGrid" className="grid gap-3 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))' }}>
+                    <div className="border border-gray-200 rounded-xl p-3.5">
+                      <p className="text-xs font-semibold text-gray-500 mb-1">출결 현황 ({attTotal}회 기록)</p>
+                      {attTotal
+                        ? REPORT_STATUS_BARS.map(b => <ReportBarRow key={b.key} label={b.label} count={att[b.key]} total={attTotal} color={b.color} />)
+                        : <p className="text-xs text-gray-400">기간 내 출결 기록이 없습니다.</p>}
+                    </div>
+                    <div className="border border-gray-200 rounded-xl p-3.5">
+                      <p className="text-xs font-semibold text-gray-500 mb-1">숙제 제출 ({hwTotal}회 기록)</p>
+                      {hwTotal
+                        ? REPORT_HW_BARS.map(b => <ReportBarRow key={b.key} label={b.label} count={hw[b.key]} total={hwTotal} color={b.color} />)
+                        : <p className="text-xs text-gray-400">기간 내 숙제 기록이 없습니다.</p>}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-3 gap-2 mb-4">
                 <MetricBox label="출석률" value={reportData.attendanceRate!==null ? reportData.attendanceRate+'%' : '기록없음'} />
@@ -2502,7 +2678,7 @@ function App() {
                 />
               </div>
 
-              <div className="flex gap-2">
+              <div className="report-actions flex gap-2">
                 <button onClick={saveComment} className="flex-1 py-2 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50">
                   리포트 저장
                 </button>

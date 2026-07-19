@@ -684,15 +684,26 @@ function App() {
   const [openLessonLogTeachers, setOpenLessonLogTeachers] = useState({});
   const [editLessonLogFor, setEditLessonLogFor] = useState(null);
 
-  function saveLessonLogEntry(date, classId, lesson, homework) {
+  // 날짜/반을 바꿔 저장하면 기록이 원래 자리에서 삭제되고 새 날짜·반으로 이동한다.
+  // 이동한 자리에 이미 기록이 있으면 덮어쓰지 않고 줄바꿈으로 이어붙여 데이터 유실을 막는다.
+  function saveLessonLogEntry(oldDate, oldClassId, newDate, newClassId, lesson, homework) {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      if (!next.lessonLogs[date]) next.lessonLogs[date] = {};
-      if (lesson) next.lessonLogs[date][classId] = lesson;
-      else delete next.lessonLogs[date][classId];
-      if (!next.classHomework[date]) next.classHomework[date] = {};
-      if (homework) next.classHomework[date][classId] = homework;
-      else delete next.classHomework[date][classId];
+      const moved = newDate !== oldDate || newClassId !== oldClassId;
+      if (moved) {
+        if (next.lessonLogs[oldDate]) delete next.lessonLogs[oldDate][oldClassId];
+        if (next.classHomework[oldDate]) delete next.classHomework[oldDate][oldClassId];
+      }
+      if (!next.lessonLogs[newDate]) next.lessonLogs[newDate] = {};
+      if (!next.classHomework[newDate]) next.classHomework[newDate] = {};
+      const existingLesson = moved ? (next.lessonLogs[newDate][newClassId] || '') : '';
+      const existingHw = moved ? (next.classHomework[newDate][newClassId] || '') : '';
+      const mergedLesson = existingLesson && lesson ? existingLesson + '\n' + lesson : (lesson || existingLesson);
+      const mergedHw = existingHw && homework ? existingHw + '\n' + homework : (homework || existingHw);
+      if (mergedLesson) next.lessonLogs[newDate][newClassId] = mergedLesson;
+      else delete next.lessonLogs[newDate][newClassId];
+      if (mergedHw) next.classHomework[newDate][newClassId] = mergedHw;
+      else delete next.classHomework[newDate][newClassId];
       return next;
     });
     setEditLessonLogFor(null);
@@ -2744,16 +2755,34 @@ function App() {
                                 {classEntries.map((e, i) => {
                                   const entryKey = e.date + '|' + e.classId;
                                   if (editLessonLogFor === entryKey) {
+                                    const classExists = data.classes.some(c => c.id === e.classId);
                                     return (
                                       <form
                                         key={i}
                                         className="py-2 space-y-2"
                                         onSubmit={ev => {
                                           ev.preventDefault();
-                                          saveLessonLogEntry(e.date, e.classId, ev.target.elements['lesson'].value.trim(), ev.target.elements['homework'].value.trim());
+                                          const f = ev.target.elements;
+                                          saveLessonLogEntry(
+                                            e.date, e.classId,
+                                            f['date'].value || e.date, f['classId'].value || e.classId,
+                                            f['lesson'].value.trim(), f['homework'].value.trim()
+                                          );
                                         }}
                                       >
-                                        <p className="text-xs text-gray-400">{e.date}</p>
+                                        <div className="flex gap-2 flex-wrap">
+                                          <div>
+                                            <label className="text-xs text-gray-500 mb-1 block">날짜</label>
+                                            <input type="date" name="date" defaultValue={e.date} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                                          </div>
+                                          <div>
+                                            <label className="text-xs text-gray-500 mb-1 block">반</label>
+                                            <select name="classId" defaultValue={e.classId} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                                              {!classExists && <option value={e.classId}>삭제된 반</option>}
+                                              {data.classes.map(c => <option key={c.id} value={c.id}>{c.name} ({c.teacher || '미지정'})</option>)}
+                                            </select>
+                                          </div>
+                                        </div>
                                         <div>
                                           <label className="text-xs text-gray-500 mb-1 block">수업 내용 (진도)</label>
                                           <textarea name="lesson" defaultValue={e.lesson} className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" rows="2" />
@@ -2762,6 +2791,7 @@ function App() {
                                           <label className="text-xs text-gray-500 mb-1 block">내준 숙제</label>
                                           <textarea name="homework" defaultValue={e.homework} className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" rows="2" />
                                         </div>
+                                        <p className="text-xs text-gray-400">날짜나 반을 바꾸면 기록이 해당 날짜·반으로 이동합니다.</p>
                                         <div className="flex justify-end gap-2">
                                           <button type="button" onClick={() => setEditLessonLogFor(null)} className="px-3 py-1 text-xs rounded-lg border border-gray-300 text-gray-500">취소</button>
                                           <button type="submit" className="px-3 py-1 text-xs rounded-lg bg-indigo-600 text-white">저장</button>

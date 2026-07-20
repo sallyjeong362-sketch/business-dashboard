@@ -1,0 +1,151 @@
+/*
+ * ============================================================================
+ *  알리고(Aligo) 카카오 알림톡 프록시 서버
+ * ============================================================================
+ *
+ *  대시보드(브라우저)와 알리고 사이에서 API 키를 안전하게 보관하며 발송을
+ *  대신 해주는 작은 중계 프로그램입니다. 학원 PC에서 실행해두면 됩니다.
+ *
+ *  ── 사용 준비 (한 번만) ─────────────────────────────────────────────
+ *  1. Node.js 설치: https://nodejs.org 에서 LTS 버전 다운로드 → 설치
+ *  2. 알리고 스마트문자(https://smartsms.aligo.in) → 카카오 알림톡 신청:
+ *     - 카카오 비즈니스 채널 연동 + 발신프로필(senderKey) 발급
+ *     - API 키 발급 (발송 서버 IP에는 "학원 PC의 공인 IP"를 등록:
+ *       네이버에 "내 IP" 검색하면 나오는 숫자)
+ *     - 알림톡 템플릿 등록 → 승인 (아래 TEMPLATES의 문구 참고)
+ *  3. 아래 [설정] 칸에 발급받은 값들을 채워넣고 파일 저장
+ *
+ *  ── 실행 방법 ───────────────────────────────────────────────────────
+ *  이 파일이 있는 폴더에서:  node aligo-alimtalk-proxy.js
+ *  (창을 닫으면 발송이 안 되니, 발송할 때는 켜두세요)
+ *
+ *  ── 대시보드 연결 ───────────────────────────────────────────────────
+ *  대시보드 관리자 탭 → "알림톡 프록시 URL"에 입력:  http://localhost:8787
+ *
+ *  ※ 알림톡 템플릿은 카카오 심사를 통과한 문구 그대로만 발송할 수 있습니다.
+ *    알리고 콘솔에서 템플릿을 만들어 승인받은 뒤, 아래 TEMPLATES의
+ *    tplCode(승인받은 템플릿 코드)와 build(승인받은 문구와 똑같은 형식)를
+ *    맞춰주세요.
+ * ============================================================================
+ */
+
+/* ─────────────────────────── [설정] 여기를 채우세요 ─────────────────────── */
+const CONFIG = {
+  APIKEY: "여기에_알리고_API키",          // 알리고에서 발급받은 API Key
+  USERID: "여기에_알리고_아이디",         // 알리고 로그인 아이디
+  SENDERKEY: "여기에_발신프로필_키",      // 카카오 발신프로필(senderKey)
+  SENDER: "01000000000",                  // 알리고에 등록한 발신번호 (숫자만)
+  PORT: 8787,                             // 프록시 포트 (대시보드 URL과 맞출 것)
+};
+
+// 대시보드가 보내는 templateCode → 알리고 승인 템플릿 매핑.
+// tplCode는 알리고 콘솔의 승인된 템플릿 코드(예: "TX_1234")로 바꾸고,
+// build()가 만드는 문구는 승인받은 템플릿 문구와 정확히 같은 형식이어야 합니다.
+const TEMPLATES = {
+  payment_reminder: {
+    tplCode: "여기에_승인템플릿코드",
+    subject: "수강료 안내",
+    build: (v) => `[${v.academyName}] 안녕하세요. ${v.date} 기준 수강료가 미납 상태입니다. 확인 부탁드립니다.`,
+  },
+  report: {
+    tplCode: "여기에_승인템플릿코드",
+    subject: "학습리포트",
+    build: (v) => `[학습리포트] ${v.studentName} (${v.className})\n기간: ${v.rangeStart} ~ ${v.rangeEnd}\n출석률: ${v.attendanceRate}\n숙제 제출률: ${v.homeworkRate}\n최근 점수: ${v.recentScore}${v.comment ? `\n강사 코멘트: ${v.comment}` : ""}`,
+  },
+  notice: {
+    tplCode: "여기에_승인템플릿코드",
+    subject: "공지사항",
+    build: (v) => `[공지] ${v.title}\n${v.content}\n(${v.date})`,
+  },
+};
+/* ────────────────────────────── 설정 끝 ─────────────────────────────────── */
+
+const http = require("http");
+const https = require("https");
+const { URLSearchParams } = require("url");
+
+function postForm(host, path, params) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams(params).toString();
+    const req = https.request(
+      { host, path, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Content-Length": Buffer.byteLength(body) } },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try { resolve(JSON.parse(data)); } catch (e) { reject(new Error("알리고 응답 해석 실패: " + data.slice(0, 200))); }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+async function createToken() {
+  const r = await postForm("kakaoapi.aligo.in", "/akv10/token/create/30/s", {
+    apikey: CONFIG.APIKEY,
+    userid: CONFIG.USERID,
+  });
+  if (String(r.code) !== "0" || !r.token) throw new Error("토큰 발급 실패: " + (r.message || JSON.stringify(r)));
+  return r.token;
+}
+
+async function sendAlimtalk(receivers, templateCode, variables) {
+  const tpl = TEMPLATES[templateCode];
+  if (!tpl) throw new Error("알 수 없는 템플릿: " + templateCode);
+  const token = await createToken();
+  const message = tpl.build(variables || {});
+  // 한 요청에 여러 명 발송 (receiver_1, message_1, receiver_2, ...)
+  const params = {
+    apikey: CONFIG.APIKEY,
+    userid: CONFIG.USERID,
+    token,
+    senderkey: CONFIG.SENDERKEY,
+    tpl_code: tpl.tplCode,
+    sender: CONFIG.SENDER,
+  };
+  receivers.slice(0, 100).forEach((phone, i) => {
+    const n = i + 1;
+    params["receiver_" + n] = String(phone).replace(/[^0-9]/g, "");
+    params["subject_" + n] = tpl.subject;
+    params["message_" + n] = message;
+  });
+  const r = await postForm("kakaoapi.aligo.in", "/akv10/alimtalk/send/", params);
+  if (String(r.code) !== "0") throw new Error("발송 실패: " + (r.message || JSON.stringify(r)));
+  return r;
+}
+
+const server = http.createServer((req, res) => {
+  // 대시보드(다른 주소)에서 호출할 수 있도록 CORS 허용
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+  if (req.method !== "POST") { res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" }); res.end("알림톡 프록시 동작 중입니다. 대시보드에서 발송 버튼을 눌러주세요."); return; }
+
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", async () => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const { to, templateCode, variables } = JSON.parse(body || "{}");
+      const receivers = (Array.isArray(to) ? to : [to]).filter(Boolean);
+      if (!receivers.length) throw new Error("받는 사람 번호가 없습니다");
+      const result = await sendAlimtalk(receivers, templateCode, variables);
+      console.log(`[발송 완료] ${templateCode} → ${receivers.length}명`);
+      res.end(JSON.stringify({ success: true, result }));
+    } catch (e) {
+      console.error("[발송 실패]", e.message);
+      res.end(JSON.stringify({ success: false, error: e.message }));
+    }
+  });
+});
+
+server.listen(CONFIG.PORT, () => {
+  console.log("─".repeat(50));
+  console.log("알리고 알림톡 프록시가 실행되었습니다.");
+  console.log(`대시보드 관리자 탭의 알림톡 프록시 URL에 입력: http://localhost:${CONFIG.PORT}`);
+  console.log("이 창을 닫으면 발송이 중단됩니다.");
+  console.log("─".repeat(50));
+});

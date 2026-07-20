@@ -49,8 +49,10 @@ const TEMPLATES = {
   },
   report: {
     tplCode: "여기에_승인템플릿코드",
-    subject: "학습리포트",
-    build: (v) => `[학습리포트] ${v.studentName} (${v.className})\n기간: ${v.rangeStart} ~ ${v.rangeEnd}\n출석률: ${v.attendanceRate}\n숙제 제출률: ${v.homeworkRate}\n최근 점수: ${v.recentScore}${v.comment ? `\n강사 코멘트: ${v.comment}` : ""}`,
+    subject: "Weekly Report",
+    // 강조표기형 템플릿: 강조 제목(emtitle)도 승인받은 값과 똑같아야 합니다.
+    emtitle: "Weekly Report",
+    build: (v) => `안녕하세요? ${v.studentName} 학부모님.\n이번주 주간 리포트를 보내드립니다.`,
   },
   notice: {
     tplCode: "여기에_승인템플릿코드",
@@ -110,6 +112,7 @@ async function sendAlimtalk(receivers, templateCode, variables) {
     params["receiver_" + n] = String(phone).replace(/[^0-9]/g, "");
     params["subject_" + n] = tpl.subject;
     params["message_" + n] = message;
+    if (tpl.emtitle) params["emtitle_" + n] = tpl.emtitle;
   });
   const r = await postForm("kakaoapi.aligo.in", "/akv10/alimtalk/send/", params);
   if (String(r.code) !== "0") throw new Error("발송 실패: " + (r.message || JSON.stringify(r)));

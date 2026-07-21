@@ -52,7 +52,17 @@ const TEMPLATES = {
     subject: "Weekly Report",
     // 강조표기형 템플릿: 강조 제목(emtitle)도 승인받은 값과 똑같아야 합니다.
     emtitle: "Weekly Report",
-    build: (v) => `안녕하세요? ${v.studentName} 학부모님.\n이번주 주간 리포트를 보내드립니다.`,
+    build: (v) => `안녕하세요? ${v.studentName} 학부모님.
+${v.academyName}에서 ${v.studentName} 학생의 주간 학습리포트를 보내드립니다.
+
+■ 반: ${v.className}
+■ 기간: ${v.rangeStart} ~ ${v.rangeEnd}
+■ 출석률: ${v.attendanceRate}
+■ 숙제 제출률: ${v.homeworkRate}
+■ 최근 시험 점수: ${v.recentScore}
+■ 강사 코멘트: ${v.comment || "-"}
+
+궁금하신 점은 학원으로 문의해 주세요.`,
   },
   notice: {
     tplCode: "여기에_승인템플릿코드",
@@ -61,6 +71,24 @@ const TEMPLATES = {
   },
 };
 /* ────────────────────────────── 설정 끝 ─────────────────────────────────── */
+
+/* 같은 폴더에 aligo-config.json 파일이 있으면 그 값을 우선 사용합니다.
+   → 프로그램 파일(이 파일)을 새 버전으로 교체해도 설정 파일만 그대로 두면
+     API 키나 템플릿 코드를 다시 입력할 필요가 없습니다. */
+let configFileLoaded = false;
+try {
+  const fs0 = require("fs");
+  const path0 = require("path");
+  const fileCfg = JSON.parse(fs0.readFileSync(path0.join(__dirname, "aligo-config.json"), "utf8"));
+  ["APIKEY", "USERID", "SENDERKEY", "SENDER"].forEach((k) => {
+    if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) CONFIG[k] = String(fileCfg[k]).trim();
+  });
+  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_REPORT: "report", TPL_NOTICE: "notice" };
+  Object.keys(tplMap).forEach((k) => {
+    if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) TEMPLATES[tplMap[k]].tplCode = String(fileCfg[k]).trim();
+  });
+  configFileLoaded = true;
+} catch (e) { /* 설정 파일이 없으면 이 파일 안의 CONFIG 값을 그대로 사용 */ }
 
 const http = require("http");
 const https = require("https");
@@ -148,6 +176,7 @@ const server = http.createServer((req, res) => {
 server.listen(CONFIG.PORT, () => {
   console.log("─".repeat(50));
   console.log("알리고 알림톡 프록시가 실행되었습니다.");
+  if (configFileLoaded) console.log("설정 파일(aligo-config.json)을 불러왔습니다.");
   console.log(`대시보드 관리자 탭의 알림톡 프록시 URL에 입력: http://localhost:${CONFIG.PORT}`);
   console.log("이 창을 닫으면 발송이 중단됩니다.");
   console.log("─".repeat(50));

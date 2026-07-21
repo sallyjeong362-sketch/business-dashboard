@@ -1353,7 +1353,7 @@ function App() {
     setTestSendFlash('');
     setTestSendError('');
     sendAlimtalk(data.alimtalkProxyUrl, phone, 'report', {
-      studentName: '테스트학생', className: '테스트반',
+      studentName: '테스트학생', academyName: data.academyName, className: '테스트반',
       rangeStart: daysAgoStr(6), rangeEnd: todayStr(),
       attendanceRate: '100%', homeworkRate: '100%', recentScore: '100점', comment: '연동 테스트 발송입니다.',
     })
@@ -1386,9 +1386,18 @@ function App() {
       setReportSendError('학부모 연락처가 등록되어 있지 않습니다. 반 관리 탭에서 먼저 등록해주세요.');
       return;
     }
-    /* 카카오 승인 템플릿(Weekly Report) 문구와 동일해야 발송됩니다 */
+    /* 카카오 승인 템플릿(Weekly Report 상세) 문구와 동일해야 발송됩니다 */
     const preview =
-      `Weekly Report\n안녕하세요? ${reportData.student.name} 학부모님.\n이번주 주간 리포트를 보내드립니다.`;
+      `Weekly Report\n` +
+      `안녕하세요? ${reportData.student.name} 학부모님.\n` +
+      `${data.academyName}에서 ${reportData.student.name} 학생의 주간 학습리포트를 보내드립니다.\n\n` +
+      `■ 반: ${reportData.student.className}\n` +
+      `■ 기간: ${reportData.startDate} ~ ${reportData.endDate}\n` +
+      `■ 출석률: ${reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음'}\n` +
+      `■ 숙제 제출률: ${reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음'}\n` +
+      `■ 최근 시험 점수: ${reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음'}\n` +
+      `■ 강사 코멘트: ${comment || '-'}\n\n` +
+      `궁금하신 점은 학원으로 문의해 주세요.`;
     setAlimtalkConfirm({
       title: reportData.student.name + ' 학습리포트',
       recipients: [{ name: reportData.student.name + ' 학부모', phone: reportData.student.parentPhone }],
@@ -1938,13 +1947,14 @@ function App() {
     setReportSendError('');
     const variables = {
       studentName: reportData.student.name,
+      academyName: data.academyName,
       className: reportData.student.className,
-      rangeStart: daysAgoStr(6),
-      rangeEnd: todayStr(),
+      rangeStart: reportData.startDate,
+      rangeEnd: reportData.endDate,
       attendanceRate: reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음',
       homeworkRate: reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음',
       recentScore: reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음',
-      comment: comment || '',
+      comment: comment || '-',
     };
     sendAlimtalk(data.alimtalkProxyUrl, reportData.student.parentPhone, 'report', variables)
       .then(() => {

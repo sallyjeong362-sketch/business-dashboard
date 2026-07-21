@@ -243,6 +243,11 @@ function loadData() {
         }
         delete c.mainTextbook;
         delete c.subTextbook;
+        // 결제일이 "5일"처럼 문자로 저장된 데이터가 있으면 정렬·자동알림·D-day
+        // 비교가 전부 어긋나므로 항상 숫자(1~31) 또는 ''로 정규화한다.
+        (c.students || []).forEach(s => {
+          s.paymentDueDay = normalizeDueDay(s.paymentDueDay);
+        });
       });
       return parsed;
     }
@@ -495,6 +500,13 @@ function studentSortComparator(sortKey) {
   };
 }
 
+// 결제일 값을 어떤 형태("5", "5일", 5, " 5 ")로 저장돼 있어도 숫자(1~31) 또는 ''로 통일
+function normalizeDueDay(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10);
+  return isNaN(n) || n < 1 || n > 31 ? '' : n;
+}
+
 const PAYMENT_SORT_OPTIONS = [
   { key: 'duedate_asc', label: '결제일(매월) 오름차순' },
   { key: 'duedate_desc', label: '결제일(매월) 내림차순' },
@@ -509,11 +521,12 @@ function paymentSortComparator(sortKey, payments) {
     if (sortKey === 'name_asc') return a.name.localeCompare(b.name, 'ko');
     if (sortKey === 'name_desc') return b.name.localeCompare(a.name, 'ko');
     if (sortKey === 'duedate_asc' || sortKey === 'duedate_desc') {
-      const ra = a.paymentDueDay || 0, rb = b.paymentDueDay || 0;
+      const ra = normalizeDueDay(a.paymentDueDay) || 0, rb = normalizeDueDay(b.paymentDueDay) || 0;
       if (!ra && !rb) return a.name.localeCompare(b.name, 'ko');
       if (!ra) return 1;
       if (!rb) return -1;
       const cmp2 = ra - rb;
+      if (cmp2 === 0) return a.name.localeCompare(b.name, 'ko');
       return sortKey === 'duedate_desc' ? -cmp2 : cmp2;
     }
     const da = (payments[a.id] || {}).paidDate || '';
@@ -3696,7 +3709,7 @@ function StudentEditForm({ student, onSave, onCancel }) {
         </label>
       </div>
       <div className="flex gap-2 mt-3">
-        <button onClick={() => onSave({ ...f, name: f.name.trim() || student.name, paymentDueDay: f.paymentDueDay ? parseInt(f.paymentDueDay, 10) : '' })}
+        <button onClick={() => onSave({ ...f, name: f.name.trim() || student.name, paymentDueDay: normalizeDueDay(f.paymentDueDay) })}
           className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700">저장</button>
         <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">취소</button>
       </div>

@@ -1176,7 +1176,7 @@ function App() {
     }
     setNoticeSendPending(prev => ({ ...prev, [id]: true }));
     setNoticeSendError(prev => ({ ...prev, [id]: '' }));
-    sendAlimtalk(data.alimtalkProxyUrl, phones, 'notice', { title: a.title, content: a.content, date: a.date })
+    sendAlimtalk(data.alimtalkProxyUrl, phones, 'notice', { academyName: data.academyName, title: a.title, content: a.content, date: a.date })
       .then(() => {
         setData(prev => ({
           ...prev,
@@ -1375,7 +1375,7 @@ function App() {
     setAlimtalkConfirm({
       title: '미납 수강료 안내',
       recipients: recips,
-      previewText: `[${data.academyName}] 안녕하세요. ${todayStr()} 기준 수강료가 미납 상태입니다. 확인 부탁드립니다.`,
+      previewText: `안녕하세요. ${data.academyName}입니다.\n${todayStr()} 기준으로 수강료가 아직 결제되지 않아 안내드립니다.\n확인 후 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
       doSend: () => sendPaymentReminders(true),
     });
   }
@@ -1428,7 +1428,7 @@ function App() {
     setAlimtalkConfirm({
       title: '공지 — ' + a.title,
       recipients: recips,
-      previewText: `[공지] ${a.title}\n${a.content}\n(${a.date})`,
+      previewText: `안녕하세요. ${data.academyName}입니다.\n\n[공지] ${a.title}\n${a.content}\n(${a.date})\n\n궁금하신 점은 학원으로 문의해 주세요.`,
       doSend: () => sendNoticeAlimtalk(id),
     });
   }

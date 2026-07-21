@@ -45,7 +45,12 @@ const TEMPLATES = {
   payment_reminder: {
     tplCode: "여기에_승인템플릿코드",
     subject: "수강료 안내",
-    build: (v) => `[${v.academyName}] 안녕하세요. ${v.date} 기준 수강료가 미납 상태입니다. 확인 부탁드립니다.`,
+    build: (v) => `안녕하세요. ${v.academyName}입니다.
+${v.date} 기준으로 수강료가 아직 결제되지 않아 안내드립니다.
+확인 후 결제 부탁드립니다.
+
+이미 결제하셨다면 이 안내는 무시해 주세요.
+궁금하신 점은 학원으로 문의해 주세요.`,
   },
   report: {
     tplCode: "여기에_승인템플릿코드",
@@ -67,7 +72,13 @@ ${v.academyName}에서 ${v.studentName} 학생의 주간 학습리포트를 보�
   notice: {
     tplCode: "여기에_승인템플릿코드",
     subject: "공지사항",
-    build: (v) => `[공지] ${v.title}\n${v.content}\n(${v.date})`,
+    build: (v) => `안녕하세요. ${v.academyName}입니다.
+
+[공지] ${v.title}
+${v.content}
+(${v.date})
+
+궁금하신 점은 학원으로 문의해 주세요.`,
   },
 };
 /* ────────────────────────────── 설정 끝 ─────────────────────────────────── */

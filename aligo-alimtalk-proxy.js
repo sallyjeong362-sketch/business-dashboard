@@ -71,13 +71,15 @@ ${v.academyName}에서 ${v.studentName} 학생의 주간 학습리포트를 보�
   },
   notice: {
     tplCode: "여기에_승인템플릿코드",
-    subject: "공지사항",
+    subject: "수업·일정 안내",
     build: (v) => `안녕하세요. ${v.academyName}입니다.
+재원생 학부모님께 학원 수업·일정 관련 안내 말씀드립니다.
 
-[공지] ${v.title}
-${v.content}
-(${v.date})
+■ 안내: ${v.title}
+■ 내용: ${v.content}
+■ 안내일: ${v.date}
 
+본 안내는 수신 동의하신 재원생 학부모님께 발송됩니다.
 궁금하신 점은 학원으로 문의해 주세요.`,
   },
 };

@@ -500,6 +500,22 @@ function studentSortComparator(sortKey) {
   };
 }
 
+// 인적사항 탭용: 같은 이름의 학생(여러 반에 중복 등록)을 한 사람으로 묶는다.
+// entries에는 반별 사본이 모두 들어가고, 대표 정보는 첫 사본에서 가져온다.
+function groupStudentsByName(students) {
+  const map = {};
+  const list = [];
+  students.forEach(s => {
+    const key = (s.name || '').trim();
+    if (!map[key]) {
+      map[key] = { name: key, entries: [] };
+      list.push(map[key]);
+    }
+    map[key].entries.push(s);
+  });
+  return list;
+}
+
 // 결제일 값을 어떤 형태("5", "5일", 5, " 5 ")로 저장돼 있어도 숫자(1~31) 또는 ''로 통일
 function normalizeDueDay(v) {
   if (v === null || v === undefined || v === '') return '';
@@ -1093,6 +1109,30 @@ function App() {
         : c)
     }));
     setStudentFormFor(null);
+  }
+
+  /* 인적사항(학생 명부) 중심 관리: 같은 이름의 학생은 한 사람으로 취급해
+     정보 수정 시 모든 반의 사본에 동시 반영하고, 소속 반 체크로 배정을 관리한다.
+     oldName이 null이면 신규 학생 등록. */
+  const [directoryFormFor, setDirectoryFormFor] = useState(null); // 학생이름 | 'new' | null
+  function saveStudentMaster(oldName, fields, classIds) {
+    const key = (oldName || '').trim();
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next.classes.forEach(c => {
+        const has = key && c.students.some(s => (s.name || '').trim() === key);
+        const want = classIds.includes(c.id);
+        if (has && !want) {
+          c.students = c.students.filter(s => (s.name || '').trim() !== key);
+        } else if (has) {
+          c.students.forEach(s => { if ((s.name || '').trim() === key) Object.assign(s, fields); });
+        } else if (want) {
+          c.students.push({ id: 's' + Date.now() + Math.random().toString(36).slice(2, 6), ...fields });
+        }
+      });
+      return next;
+    });
+    setDirectoryFormFor(null);
   }
 
   function addScore(studentId) {
@@ -2086,7 +2126,16 @@ function App() {
       {tab === 'directory' && (
         <div className="space-y-3">
           <div className="w-fit">
-            <SummaryCard label="전체 학생 수" value={allStudents(data).length + '명'} tone="bg-indigo-50 text-indigo-700" />
+            <SummaryCard
+              label="전체 학생 수"
+              value={
+                groupStudentsByName(allStudents(data)).length + '명' +
+                (allStudents(data).length !== groupStudentsByName(allStudents(data)).length
+                  ? ' (반 등록 ' + allStudents(data).length + '건)'
+                  : '')
+              }
+              tone="bg-indigo-50 text-indigo-700"
+            />
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-sm text-gray-600 mb-2">
@@ -2108,39 +2157,60 @@ function App() {
               ⬇ 외부 업로드용 CSV로 내보내기
             </button>
           </div>
-          {allStudents(data).length === 0 && <EmptyState text="등록된 학생이 없습니다. 반 관리 탭에서 학생을 추가해주세요." />}
+          {directoryFormFor === 'new' ? (
+            <StudentEditForm
+              student={{}}
+              classes={data.classes}
+              selectedClassIds={[]}
+              isNew
+              onSave={(fields, classIds) => saveStudentMaster(null, fields, classIds)}
+              onCancel={() => setDirectoryFormFor(null)}
+            />
+          ) : (
+            <button onClick={() => setDirectoryFormFor('new')} className="w-full py-2 border-2 border-dashed border-indigo-300 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50">
+              + 새 학생 등록 (인적사항 입력 후 반 선택)
+            </button>
+          )}
+          {allStudents(data).length === 0 && <EmptyState text="등록된 학생이 없습니다. 위의 새 학생 등록으로 추가해주세요." />}
           <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {allStudents(data)
-              .slice()
-              .sort(studentSortComparator(directorySort))
-              .map(s => (
-                <div key={s.id} className="px-4 py-3">
+            {groupStudentsByName(
+              allStudents(data).slice().sort(studentSortComparator(directorySort))
+            ).map(g => {
+              const s = g.entries[0];
+              return (
+                <div key={g.name} className="px-4 py-3">
                   <div className="flex items-center justify-between text-sm flex-wrap gap-2">
                     <div>
-                      <span className="font-medium text-gray-800">{s.name}</span>
+                      <span className="font-medium text-gray-800">{g.name}</span>
+                      {g.entries.map(e => (
+                        <span key={e.id} className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 align-middle">{e.className}</span>
+                      ))}
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {[s.className, s.grade, s.school, s.parentPhone].filter(Boolean).join(' · ')}
+                        {[s.grade, s.school, s.parentPhone].filter(Boolean).join(' · ')}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {studentFormFor && studentFormFor.classId === s.classId && studentFormFor.studentId === s.id ? (
-                        <button onClick={() => setStudentFormFor(null)} className="text-xs text-gray-400 hover:underline">닫기</button>
+                      {directoryFormFor === g.name ? (
+                        <button onClick={() => setDirectoryFormFor(null)} className="text-xs text-gray-400 hover:underline">닫기</button>
                       ) : (
-                        <button onClick={() => setStudentFormFor({ classId: s.classId, studentId: s.id })} className="text-xs text-indigo-600 hover:underline">수정</button>
+                        <button onClick={() => setDirectoryFormFor(g.name)} className="text-xs text-indigo-600 hover:underline">수정</button>
                       )}
                     </div>
                   </div>
-                  {studentFormFor && studentFormFor.classId === s.classId && studentFormFor.studentId === s.id && (
+                  {directoryFormFor === g.name && (
                     <div className="mt-2">
                       <StudentEditForm
                         student={s}
-                        onSave={fields => saveStudentInfo(s.classId, s.id, fields)}
-                        onCancel={() => setStudentFormFor(null)}
+                        classes={data.classes}
+                        selectedClassIds={g.entries.map(e => e.classId)}
+                        onSave={(fields, classIds) => saveStudentMaster(g.name, fields, classIds)}
+                        onCancel={() => setDirectoryFormFor(null)}
                       />
                     </div>
                   )}
                 </div>
-              ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -3662,8 +3732,9 @@ function EmptyState({ text }) {
   return <div className="text-center py-12 text-sm text-gray-400">{text}</div>;
 }
 
-/* 학생 정보 전체를 한 화면에서 입력하는 폼 (인적사항·반 관리 공용) */
-function StudentEditForm({ student, onSave, onCancel }) {
+/* 학생 정보 전체를 한 화면에서 입력하는 폼 (인적사항·반 관리 공용).
+   classes를 넘기면 "소속 반" 체크 목록이 함께 나와 반 배정까지 한 번에 관리한다. */
+function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, onCancel }) {
   const [f, setF] = useState({
     name: student.name || '',
     school: student.school || '',
@@ -3674,7 +3745,11 @@ function StudentEditForm({ student, onSave, onCancel }) {
     paymentDueDay: student.paymentDueDay || '',
     memo: student.memo || '',
   });
+  const [assign, setAssign] = useState(selectedClassIds || []);
+  const withClasses = !!classes;
+  const saveDisabled = withClasses && (!f.name.trim() || (isNew && assign.length === 0));
   const set = k => e => setF(prev => ({ ...prev, [k]: e.target.value }));
+  const toggleAssign = id => setAssign(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const inputCls = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm mt-1 bg-white';
   return (
     <div className="w-full bg-indigo-50/60 border border-indigo-200 rounded-xl p-3">
@@ -3708,9 +3783,34 @@ function StudentEditForm({ student, onSave, onCancel }) {
           <input value={f.memo} onChange={set('memo')} className={inputCls} />
         </label>
       </div>
+      {withClasses && (
+        <div className="mt-3 pt-3 border-t border-dashed border-indigo-200">
+          <p className="text-xs font-semibold text-gray-600 mb-1.5">소속 반 (체크한 반의 명단에 들어갑니다)</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            {classes.map(c => (
+              <label key={c.id} className="text-xs text-gray-700 flex items-center gap-1.5">
+                <input type="checkbox" checked={assign.includes(c.id)} onChange={() => toggleAssign(c.id)} />
+                {c.name}
+              </label>
+            ))}
+          </div>
+          {!isNew && assign.length === 0 && (
+            <p className="text-xs text-red-500 mt-1.5">⚠ 반을 모두 해제하고 저장하면 이 학생은 전체 명단에서 삭제됩니다.</p>
+          )}
+          {isNew && assign.length === 0 && (
+            <p className="text-xs text-gray-400 mt-1.5">최소 한 개 반을 선택해야 등록할 수 있어요.</p>
+          )}
+        </div>
+      )}
       <div className="flex gap-2 mt-3">
-        <button onClick={() => onSave({ ...f, name: f.name.trim() || student.name, paymentDueDay: normalizeDueDay(f.paymentDueDay) })}
-          className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700">저장</button>
+        <button
+          disabled={saveDisabled}
+          onClick={() => {
+            const fields = { ...f, name: f.name.trim() || student.name, paymentDueDay: normalizeDueDay(f.paymentDueDay) };
+            if (withClasses) onSave(fields, assign);
+            else onSave(fields);
+          }}
+          className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">저장</button>
         <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">취소</button>
       </div>
     </div>

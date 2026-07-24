@@ -1559,10 +1559,9 @@ function App() {
       .finally(() => setGatewayPendingFor(null));
   }
 
-  function sendPaymentReminders(manual) {
-    const phones = unpaidPhoneList(data);
+  function sendPaymentRemindersTo(phones) {
     if (!phones.length) {
-      if (manual) setReminderSendError('미납 학부모 연락처가 없습니다.');
+      setReminderSendError('선택된 학부모가 없습니다.');
       return;
     }
     setReminderSendPending(true);
@@ -1576,10 +1575,20 @@ function App() {
       .finally(() => setReminderSendPending(false));
   }
 
+  function sendPaymentReminders(manual) {
+    const phones = unpaidPhoneList(data);
+    if (!phones.length) {
+      if (manual) setReminderSendError('미납 학부모 연락처가 없습니다.');
+      return;
+    }
+    sendPaymentRemindersTo(phones);
+  }
+
   /* ---- 알림톡 발송 전 확인 단계 ----
      발송 버튼을 누르면 바로 보내지 않고, 받는 사람 목록과 발송 문구 미리보기를
      먼저 보여준 뒤 "이대로 발송"을 눌러야 실제 발송한다. */
   const [alimtalkConfirm, setAlimtalkConfirm] = useState(null);
+  const [alimtalkChecked, setAlimtalkChecked] = useState({}); // 선택 발송용: { phone: 체크여부 }
   const [testSendPhone, setTestSendPhone] = useState('');
   const [testSendPending, setTestSendPending] = useState(false);
   const [testSendFlash, setTestSendFlash] = useState('');
@@ -1615,11 +1624,16 @@ function App() {
       }
     });
     if (!recips.length) { setReminderSendError('미납 학부모 연락처가 없습니다.'); return; }
+    // 학생별로 확인 후 보낼 사람만 고를 수 있게 체크박스 상태를 함께 초기화 (기본: 전원 선택)
+    const init = {};
+    recips.forEach(r => { init[r.phone] = true; });
+    setAlimtalkChecked(init);
     setAlimtalkConfirm({
       title: '미납 수강료 안내',
       recipients: recips,
+      selectable: true,
       previewText: `안녕하세요. ${data.academyName}입니다.\n${todayStr()} 기준으로 수강료가 아직 결제되지 않아 안내드립니다.\n확인 후 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
-      doSend: () => sendPaymentReminders(true),
+      doSend: phones => sendPaymentRemindersTo(phones),
     });
   }
 
@@ -2297,16 +2311,50 @@ function App() {
       </div>
       <p className="text-xs text-gray-400 mb-4">탭을 드래그하면 순서를 바꿀 수 있어요. (학생 전체 인적사항 탭은 항상 첫 번째로 고정됩니다)</p>
 
-      {alimtalkConfirm && (
+      {alimtalkConfirm && (() => {
+        const selectable = !!alimtalkConfirm.selectable;
+        const checkedCount = selectable
+          ? alimtalkConfirm.recipients.filter(r => alimtalkChecked[r.phone]).length
+          : alimtalkConfirm.recipients.length;
+        const setAll = value => {
+          const next = {};
+          alimtalkConfirm.recipients.forEach(r => { next[r.phone] = value; });
+          setAlimtalkChecked(next);
+        };
+        return (
         <div className="bg-white border-2 border-indigo-300 rounded-xl p-4 mb-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-semibold text-gray-900">📨 알림톡 발송 확인 — {alimtalkConfirm.title}</p>
             <button onClick={() => setAlimtalkConfirm(null)} className="text-xs text-gray-400 hover:text-gray-600">취소 ×</button>
           </div>
-          <p className="text-xs font-semibold text-gray-500 mb-1">받는 사람 ({alimtalkConfirm.recipients.length}명)</p>
+          <div className="flex items-center justify-between mb-1 flex-wrap gap-1">
+            <p className="text-xs font-semibold text-gray-500">
+              받는 사람 {selectable ? `(${checkedCount}명 선택 / 전체 ${alimtalkConfirm.recipients.length}명)` : `(${alimtalkConfirm.recipients.length}명)`}
+            </p>
+            {selectable && (
+              <span className="flex gap-2">
+                <button onClick={() => setAll(true)} className="text-xs text-indigo-600 hover:underline">전체 선택</button>
+                <button onClick={() => setAll(false)} className="text-xs text-gray-400 hover:underline">전체 해제</button>
+              </span>
+            )}
+          </div>
+          {selectable && <p className="text-xs text-gray-400 mb-1">체크된 학생의 학부모에게만 발송됩니다. 보내지 않을 학생은 체크를 해제하세요.</p>}
           <div className="max-h-44 overflow-y-auto divide-y divide-gray-100 mb-2">
             {alimtalkConfirm.recipients.map((r, i) => (
-              <div key={i} className="py-1.5 text-sm text-gray-700">{r.name} <span className="text-xs text-gray-400 ml-1.5">{r.phone}</span></div>
+              selectable ? (
+                <label key={i} className="py-1.5 text-sm text-gray-700 flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!alimtalkChecked[r.phone]}
+                    onChange={() => setAlimtalkChecked(prev => ({ ...prev, [r.phone]: !prev[r.phone] }))}
+                  />
+                  <span className={alimtalkChecked[r.phone] ? '' : 'text-gray-400 line-through'}>
+                    {r.name} <span className="text-xs text-gray-400 ml-1.5 no-underline">{r.phone}</span>
+                  </span>
+                </label>
+              ) : (
+                <div key={i} className="py-1.5 text-sm text-gray-700">{r.name} <span className="text-xs text-gray-400 ml-1.5">{r.phone}</span></div>
+              )
             ))}
           </div>
           <p className="text-xs font-semibold text-gray-500 mb-1">발송 문구 미리보기</p>
@@ -2315,12 +2363,24 @@ function App() {
           <div className="flex justify-end gap-2 mt-3">
             <button onClick={() => setAlimtalkConfirm(null)} className="px-4 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600">취소</button>
             <button
-              onClick={() => { const c = alimtalkConfirm; setAlimtalkConfirm(null); if (c && c.doSend) c.doSend(); }}
-              className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white font-medium"
-            >이대로 발송</button>
+              disabled={selectable && checkedCount === 0}
+              onClick={() => {
+                const c = alimtalkConfirm;
+                setAlimtalkConfirm(null);
+                if (!c || !c.doSend) return;
+                if (c.selectable) {
+                  const phones = c.recipients.filter(r => alimtalkChecked[r.phone]).map(r => r.phone);
+                  c.doSend(phones);
+                } else {
+                  c.doSend();
+                }
+              }}
+              className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+            >{selectable ? `선택한 ${checkedCount}명에게 발송` : '이대로 발송'}</button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {tab === 'directory' && (
         <div className="space-y-3">

@@ -340,9 +340,10 @@ function collectDaySchedulePrompt(days, baseTime, baseEndTime, existing) {
 }
 
 function saveData(data) {
-  // 경영지표의 월별 재원생 흐름(신규/퇴원 추정)을 위해 이번 달 재원생 수를 기록해둔다.
+  // 경영지표의 월별 재원생 흐름(신규/퇴원)을 위해 이번 달 재원생(퇴소자 제외) 수를 기록해둔다.
   if (!data.studentSnapshots) data.studentSnapshots = {};
-  data.studentSnapshots[todayStr().slice(0, 7)] = groupStudentsByName(allStudents(data)).length;
+  data.studentSnapshots[todayStr().slice(0, 7)] =
+    groupStudentsByName(allStudents(data).filter(s => isActiveStudent(s, todayStr()))).length;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -573,6 +574,17 @@ function studentSortComparator(sortKey) {
   };
 }
 
+/* 퇴소 처리: 퇴소일자가 지난 학생은 출결·수납·시험 등 "진행 중" 명단에서
+   자동 제외한다. 과거 기록(출결·납부·시험·리포트)은 모두 보존되고,
+   인적사항에는 퇴소 배지와 함께 계속 표시된다. 퇴소일 당일까지는 재원으로 취급. */
+function isActiveStudent(s, dateStr) {
+  return !s.withdrawDate || s.withdrawDate >= dateStr;
+}
+// 해당 월에 하루라도 재원했으면 그 달의 수납 대상에 포함
+function isActiveInMonth(s, monthKey) {
+  return !s.withdrawDate || s.withdrawDate >= monthKey + '-01';
+}
+
 // 인적사항 탭용: 같은 이름의 학생(여러 반에 중복 등록)을 한 사람으로 묶는다.
 // entries에는 반별 사본이 모두 들어가고, 대표 정보는 첫 사본에서 가져온다.
 function groupStudentsByName(students) {
@@ -735,7 +747,7 @@ function paymentDisplayStatus(student, monthKey, record) {
 }
 
 function computePaymentSummary(data, monthKey) {
-  const students = allStudents(data);
+  const students = allStudents(data).filter(s => isActiveInMonth(s, monthKey));
   let paidCount = 0, totalDue = 0, totalCollected = 0;
   students.forEach(s => {
     const t = getTuitionRecord(data, s.id, monthKey);
@@ -804,19 +816,26 @@ function computeMetrics(data, monthKey) {
   const groups = groupStudentsByName(allStudents(data));
   const isCurrent = monthKey === todayStr().slice(0, 7);
   const snapshots = data.studentSnapshots || {};
-  const currentCount = isCurrent ? groups.length : (snapshots[monthKey] !== undefined ? snapshots[monthKey] : null);
+  // 재원생: 퇴소일자가 지나지 않은 학생만 (사람 기준)
+  const activeGroups = groups.filter(g => g.entries.some(e => isActiveStudent(e, todayStr())));
+  const currentCount = isCurrent ? activeGroups.length : (snapshots[monthKey] !== undefined ? snapshots[monthKey] : null);
   // 신규 등록: 등록일자가 해당 월인 학생 (사람 기준)
   let newCount = 0;
   groups.forEach(g => {
     if (g.entries.some(e => (e.enrollDate || '').startsWith(monthKey))) newCount++;
   });
-  // 퇴원 추정: 전월 재원생 + 신규 - 이번 달 재원생 (월별 스냅샷 기반)
+  // 퇴원: 퇴소일자가 해당 월인 학생 수 (사람 기준, 정확 집계).
+  // 퇴소일자 기록이 없던 시기는 월별 스냅샷 기반 추정을 유지한다.
+  let churn = 0;
+  groups.forEach(g => {
+    if (g.entries.length && g.entries.every(e => e.withdrawDate) && g.entries.some(e => (e.withdrawDate || '').startsWith(monthKey))) churn++;
+  });
   const prevCount = snapshots[shiftMonth(monthKey, -1)];
-  let churn = null, churnRate = null;
-  if (prevCount !== undefined && currentCount !== null) {
+  let churnRate = null;
+  if (churn === 0 && prevCount !== undefined && currentCount !== null) {
     churn = Math.max(0, prevCount + newCount - currentCount);
-    churnRate = prevCount ? Math.round((churn / prevCount) * 100) : null;
   }
+  if (prevCount) churnRate = Math.round((churn / prevCount) * 100);
   // 상담 → 등록 전환: "입학상담을 했던 바로 그 학생"이 실제로 반에 등록된 경우만 집계
   // (상담 기록의 학생 이름과 등록된 학생 이름이 같고, 등록일이 상담일 이후인 경우)
   const admissionList = (data.counseling || []).filter(k => k.type === '입학상담' && (k.date || '').startsWith(monthKey));
@@ -886,8 +905,9 @@ function computeTeacherMetrics(data, monthKey) {
       order.push(t);
     }
     byTeacher[t].classNames.push(c.name);
-    byTeacher[t].studentCount += c.students.length;
-    c.students.forEach(s => {
+    const activeStudents = c.students.filter(s => isActiveInMonth(s, monthKey));
+    byTeacher[t].studentCount += activeStudents.length;
+    activeStudents.forEach(s => {
       byTeacher[t].revenue += getTuitionRecord(data, s.id, monthKey).tuition || 0;
     });
   });
@@ -941,7 +961,7 @@ function getVocabTest(data, studentId, dateStr, testType) {
 function unpaidPhoneList(data) {
   const phones = [];
   const monthKey = currentMonthKey();
-  allStudents(data).forEach(s => {
+  allStudents(data).filter(s => isActiveInMonth(s, monthKey)).forEach(s => {
     const t = getTuitionRecord(data, s.id, monthKey);
     // Only count as unpaid/overdue once this month's due date has actually arrived — before
     // that, non-payment simply isn't due yet, so it shouldn't trigger reminders.
@@ -1288,7 +1308,7 @@ function App() {
       let counter = 0;
       const vocabTests = prev.vocabTests.slice();
       todayClasses.forEach(c => {
-        c.students.forEach(s => {
+        c.students.filter(s => isActiveStudent(s, date)).forEach(s => {
           VOCAB_TEST_TYPES.forEach(testType => {
             if (!vocabTests.some(v => v.studentId === s.id && v.date === date && v.testType === testType)) {
               vocabTests.push({ id: 'vt' + Date.now() + '_' + (counter++), studentId: s.id, testType, date, result: null, wrongCount: 0, retest: null, comment: '' });
@@ -1357,7 +1377,7 @@ function App() {
   const summary = useMemo(() => {
     let present=0, late=0, absent=0, early=0, total=0;
     todayClasses.forEach(c => {
-      c.students.forEach(s => {
+      c.students.filter(s => isActiveStudent(s, date)).forEach(s => {
         total++;
         const entry = getAttendanceEntry(data, date, c.id, s.id);
         const st = entry?.status;
@@ -1523,7 +1543,7 @@ function App() {
       setNoticeSendError(prev => ({ ...prev, [id]: '학부모 또는 전체 대상 공지만 알림톡으로 발송할 수 있습니다.' }));
       return;
     }
-    const phones = [...new Set(allStudents(data).map(s => s.parentPhone).filter(Boolean))];
+    const phones = [...new Set(allStudents(data).filter(s => isActiveStudent(s, todayStr())).map(s => s.parentPhone).filter(Boolean))];
     if (!phones.length) {
       setNoticeSendError(prev => ({ ...prev, [id]: '등록된 학부모 연락처가 없습니다.' }));
       return;
@@ -1636,7 +1656,7 @@ function App() {
       const cls = next.classes.find(c => c.id === classId);
       if (!cls) return prev;
       className = cls.name;
-      cls.students.forEach(s => {
+      cls.students.filter(s => isActiveInMonth(s, monthKey)).forEach(s => {
         if (amount === 0) {
           if (next.bookFeesByMonth?.[monthKey]) delete next.bookFeesByMonth[monthKey][s.id];
         } else {
@@ -1659,7 +1679,7 @@ function App() {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       next.classes.forEach(c => c.students.forEach(s => {
-        if (s.grade === grade) {
+        if (s.grade === grade && isActiveInMonth(s, monthKey)) {
           ensureTuitionRecord(next, s.id, monthKey).tuition = amount;
           count++;
         }
@@ -1679,7 +1699,7 @@ function App() {
       const cls = next.classes.find(c => c.id === classId);
       if (!cls) return prev;
       className = cls.name;
-      cls.students.forEach(s => {
+      cls.students.filter(s => isActiveInMonth(s, monthKey)).forEach(s => {
         ensureTuitionRecord(next, s.id, monthKey).tuition = amount;
         count++;
       });
@@ -1918,7 +1938,7 @@ function App() {
     if (!cls) return;
     const seen = {};
     const recips = [];
-    cls.students.forEach(st => {
+    cls.students.filter(st => isActiveStudent(st, dailyReportDate)).forEach(st => {
       if (!st.parentPhone || seen[st.parentPhone]) return;
       seen[st.parentPhone] = true;
       const student = { ...st, classId: cls.id, className: cls.name };
@@ -1997,7 +2017,7 @@ function App() {
     }
     const seen = {};
     const recips = [];
-    allStudents(data).forEach(s => {
+    allStudents(data).filter(s => isActiveStudent(s, todayStr())).forEach(s => {
       if (s.parentPhone && !seen[s.parentPhone]) {
         seen[s.parentPhone] = true;
         recips.push({ name: s.name + ' 학부모', phone: s.parentPhone });
@@ -2373,7 +2393,7 @@ function App() {
     const tomorrowDay = tomorrow.getDate();
     const monthKey = currentMonthKey();
     const dueToday = [], dueTomorrow = [], unpaidList = [];
-    allStudents(data).forEach(s => {
+    allStudents(data).filter(s => isActiveInMonth(s, monthKey)).forEach(s => {
       const t = getTuitionRecord(data, s.id, monthKey);
       if (s.paymentDueDay === todayDay) dueToday.push(s);
       else if (s.paymentDueDay === tomorrowDay) dueTomorrow.push(s);
@@ -2714,13 +2734,16 @@ function App() {
         <div className="space-y-3">
           <div className="w-fit">
             <SummaryCard
-              label="전체 학생 수"
-              value={
-                groupStudentsByName(allStudents(data)).length + '명' +
-                (allStudents(data).length !== groupStudentsByName(allStudents(data)).length
-                  ? ' (반 등록 ' + allStudents(data).length + '건)'
-                  : '')
-              }
+              label="재원생 수"
+              value={(() => {
+                const all = groupStudentsByName(allStudents(data)).length;
+                const active = groupStudentsByName(allStudents(data).filter(s => isActiveStudent(s, todayStr()))).length;
+                const withdrawn = all - active;
+                const regs = allStudents(data).length;
+                return active + '명'
+                  + (withdrawn > 0 ? ` · 퇴소 ${withdrawn}명` : '')
+                  + (regs !== all ? ` (반 등록 ${regs}건)` : '');
+              })()}
               tone="bg-indigo-50 text-indigo-700"
             />
           </div>
@@ -2809,7 +2832,8 @@ function App() {
         <div className="space-y-2">
           {todayClasses.length === 0 && <EmptyState text="오늘 예정된 수업이 없습니다." />}
           {todayClasses.map(c => {
-            const checked = c.students.filter(s => getAttendanceEntry(data, date, c.id, s.id)?.status).length;
+            const activeStudents = c.students.filter(s => isActiveStudent(s, date));
+            const checked = activeStudents.filter(s => getAttendanceEntry(data, date, c.id, s.id)?.status).length;
             return (
               <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer"
                    onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
@@ -2817,11 +2841,11 @@ function App() {
                   <div className="text-sm font-semibold text-indigo-700 whitespace-nowrap">{formatClassTimeForDay(c, weekday)}</div>
                   <div>
                     <p className="font-medium text-gray-900">{c.name}</p>
-                    <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {c.students.length}명</p>
+                    <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {activeStudents.length}명</p>
                   </div>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${checked===c.students.length && c.students.length>0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                  출결 {checked}/{c.students.length}
+                <span className={`text-xs px-2 py-1 rounded-full ${checked===activeStudents.length && activeStudents.length>0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                  출결 {checked}/{activeStudents.length}
                 </span>
               </div>
             );
@@ -2869,7 +2893,7 @@ function App() {
               )}
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-                  {data.classes.find(c=>c.id===selectedClassId)?.students.map(s => {
+                  {data.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
                     const entry = getAttendanceEntry(data, date, selectedClassId, s.id) || { status: null };
                     const hwStatus = normalizeHomework(entry);
                     return (
@@ -3073,7 +3097,7 @@ function App() {
                 )}
 
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-                  {allStudents(data).slice().sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
+                  {allStudents(data).filter(s => isActiveInMonth(s, paymentMonthKey)).sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
                     const p = getTuitionRecord(data, s.id, paymentMonthKey);
                     const bfChips = bookFeeChips(data, s.id, paymentMonthKey);
                     const bfOut = bookFeeOutstanding(data, s.id, paymentMonthKey);
@@ -3688,7 +3712,7 @@ function App() {
               </div>
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100 mb-4">
-                  {data.classes.find(c=>c.id===selectedClassId)?.students.map(s => {
+                  {data.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
                     return (
                       <div key={s.id} className="p-3 space-y-2.5">
                         <span className="text-sm font-medium text-gray-800">{s.name}</span>
@@ -3913,12 +3937,12 @@ function App() {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <MetricBox label="재원생" value={m.currentCount !== null ? m.currentCount + '명' : '기록 없음'} />
                 <MetricBox label="신규 등록 (등록일 기준)" value={m.newCount + '명'} />
-                <MetricBox label="퇴원 (추정)" value={m.churn !== null ? m.churn + '명' + (m.churnRate !== null ? ' · 이탈률 ' + m.churnRate + '%' : '') : '다음 달부터 집계'} />
+                <MetricBox label="퇴원 (퇴소일 기준)" value={m.churn + '명' + (m.churnRate !== null ? ' · 이탈률 ' + m.churnRate + '%' : '')} />
                 <MetricBox label="입학상담" value={m.admissionConsults + '건'} />
                 <MetricBox label="상담 → 등록 전환율" value={m.conversionRate !== null ? `${m.conversionRate}% (${m.admissionConsults}건 중 ${m.convertedCount}명 등록)` : '—'} />
                 <MetricBox label="평균 출석률" value={m.attendanceRate !== null ? m.attendanceRate + '%' : '기록 없음'} />
               </div>
-              <p className="text-xs text-gray-400 mt-2">퇴원은 (전월 재원생 + 신규 − 이번 달 재원생)으로 추정합니다. 재원생 수는 매달 자동 기록되어 다음 달부터 집계돼요. 전환율은 입학상담한 학생 이름이 실제 반에 등록된 경우만 셉니다 — 상담 기록의 학생 이름과 등록 이름을 같게 적어주세요.</p>
+              <p className="text-xs text-gray-400 mt-2">퇴원은 인적사항의 퇴소일자가 해당 월인 학생 수로 집계합니다 (퇴소일자 기록이 없으면 월별 재원생 스냅샷으로 추정). 전환율은 입학상담한 학생 이름이 실제 반에 등록된 경우만 셉니다 — 상담 기록의 학생 이름과 등록 이름을 같게 적어주세요.</p>
             </div>
 
             <div className="bg-white border border-gray-200 rounded-xl p-4">

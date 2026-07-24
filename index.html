@@ -378,10 +378,18 @@ function buildDailyReportVars(data, student, dateStr) {
   const hwParts = [hw ? '검사 ' + (HW_META[hw] || HW_META.missing).label : '검사 기록 없음'];
   if (assigned) hwParts.push('오늘 숙제: ' + assigned);
   const homework = hwParts.join(' · ');
-  const tests = (data.vocabTests || []).filter(v => v.studentId === student.id && v.date === dateStr && v.result);
-  const test = tests.length
-    ? tests.map(v => `${v.testType} ${(VOCAB_RESULT_META[v.result] || VOCAB_RESULT_META.fail).label}${v.result !== 'absent' && v.wrongCount ? ` (${v.wrongCount}개 틀림)` : ''}`).join(' / ')
-    : '시험 없음';
+  // 단어/문법시험 탭의 채점 기록과 연동: 시험 종류별로 통과 여부를 구분해 표시
+  const testParts = VOCAB_TEST_TYPES.map(tt => {
+    const v = (data.vocabTests || []).find(x => x.studentId === student.id && x.date === dateStr && x.testType === tt && x.result);
+    if (!v) return null;
+    const shortName = tt === '문법 복습시험' ? '문법시험' : tt;
+    let part = `${shortName} ${(VOCAB_RESULT_META[v.result] || VOCAB_RESULT_META.fail).label}`;
+    if (v.result !== 'absent' && v.wrongCount) part += ` (${v.wrongCount}개 틀림)`;
+    if (v.retest === 'needed') part += ' · 재시험 필요';
+    else if (v.retest === 'done') part += ' · 재시험 완료';
+    return part;
+  }).filter(Boolean);
+  const test = testParts.length ? testParts.join(' / ') : '시험 없음';
   // 최근 30일(해당 날짜 포함) 숙제 이행률 — 미확인 포함, 완료만 제출로 인정
   let total = 0, done = 0;
   const end = new Date(dateStr + 'T00:00:00');

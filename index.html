@@ -177,6 +177,7 @@ function defaultData() {
     ],
     expensesByMonth: {},
     studentSnapshots: {},
+    teacherSalaries: {},
   };
 }
 
@@ -238,6 +239,7 @@ function loadData() {
       if (!parsed.bookFees) parsed.bookFees = {};
       if (!parsed.expensesByMonth) parsed.expensesByMonth = {};
       if (!parsed.studentSnapshots) parsed.studentSnapshots = {};
+      if (!parsed.teacherSalaries) parsed.teacherSalaries = {};
       // Migrate single 주교재/부교재 string fields into the textbooks list (multiple
       // books per class, each with a category like 주교재/어휘/문법/독해).
       (parsed.classes || []).forEach(c => {
@@ -757,6 +759,41 @@ function metricsTrendMonths(monthKey, n) {
   return arr;
 }
 
+/* 선생님별 수익성: 담당 반들의 학생 수·수업료 매출을 집계하고,
+   입력된 월급 기준으로 인건비율과 "적정선(40%)까지 필요한 추가 원생 수"를 계산 */
+const TEACHER_LABOR_TARGET = 40; // 매출 대비 인건비 적정 상한(%)
+
+function computeTeacherMetrics(data, monthKey) {
+  const byTeacher = {};
+  const order = [];
+  data.classes.forEach(c => {
+    const t = (c.teacher || '').trim() || '담당 미지정';
+    if (!byTeacher[t]) {
+      byTeacher[t] = { teacher: t, classNames: [], studentCount: 0, revenue: 0 };
+      order.push(t);
+    }
+    byTeacher[t].classNames.push(c.name);
+    byTeacher[t].studentCount += c.students.length;
+    c.students.forEach(s => {
+      byTeacher[t].revenue += getTuitionRecord(data, s.id, monthKey).tuition || 0;
+    });
+  });
+  return order.map(name => {
+    const row = byTeacher[name];
+    const salary = (data.teacherSalaries || {})[name] || 0;
+    const laborRate = row.revenue && salary ? Math.round((salary / row.revenue) * 100) : null;
+    const avgTuition = row.studentCount && row.revenue ? row.revenue / row.studentCount : 0;
+    // 인건비율을 적정선까지 낮추려면 매출이 salary/0.4 이상이어야 함 → 부족분을 평균 수강료로 환산
+    let neededStudents = null;
+    if (laborRate !== null && avgTuition > 0) {
+      neededStudents = laborRate <= TEACHER_LABOR_TARGET
+        ? 0
+        : Math.ceil((salary / (TEACHER_LABOR_TARGET / 100) - row.revenue) / avgTuition);
+    }
+    return { ...row, salary, laborRate, avgTuition, neededStudents };
+  });
+}
+
 function promoteGradesInData(data) {
   const next = JSON.parse(JSON.stringify(data));
   next.classes.forEach(c => c.students.forEach(s => { if (s.grade) s.grade = nextGrade(s.grade); }));
@@ -915,6 +952,15 @@ function App() {
       next.expensesByMonth[monthKey][key] = value === '' ? 0 : Math.max(0, parseInt(value, 10) || 0);
       return next;
     });
+  }
+  function setTeacherSalary(name, value) {
+    setData(prev => ({
+      ...prev,
+      teacherSalaries: {
+        ...(prev.teacherSalaries || {}),
+        [name]: value === '' ? 0 : Math.max(0, parseInt(value, 10) || 0),
+      },
+    }));
   }
   const [paymentViewMonth, setPaymentViewMonth] = useState(null);
   const [openLessonLogClasses, setOpenLessonLogClasses] = useState({});
@@ -3338,6 +3384,64 @@ function App() {
                 ))}
               </div>
               <p className="text-xs text-gray-400 mt-2">적정 기준은 학원업계에서 통용되는 참고치이며, 규모·지역에 따라 다를 수 있습니다.</p>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-sm font-semibold text-gray-700 mb-1">🧑‍🏫 선생님별 수익성</p>
+              <p className="text-xs text-gray-400 mb-3">
+                선생님별 월급을 입력하면, 담당 반 학생 수·수업료 매출 대비 인건비율과
+                적정선({TEACHER_LABOR_TARGET}%)까지 필요한 추가 원생 수를 계산합니다. (위 비용 입력의 전체 인건비와는 별개인 참고용 분석입니다)
+              </p>
+              <div className="divide-y divide-gray-100">
+                {computeTeacherMetrics(data, metricsMonth).map(t => {
+                  const status = t.laborRate !== null ? metricStatus('labor', t.laborRate) : null;
+                  return (
+                    <div key={t.teacher} className="py-3">
+                      <div className="flex items-center justify-between flex-wrap gap-1.5 mb-1.5">
+                        <div>
+                          <span className="text-sm font-medium text-gray-800">{t.teacher}</span>
+                          {t.classNames.map(cn => (
+                            <span key={cn} className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 align-middle">{cn}</span>
+                          ))}
+                        </div>
+                        <span className="text-xs text-gray-500">학생 {t.studentCount}명 · 담당 반 매출 {t.revenue.toLocaleString()}원</span>
+                      </div>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <label className="text-xs text-gray-600 flex items-center gap-1.5">
+                          월급
+                          <input
+                            type="number" min="0" step="100000"
+                            value={t.salary || ''}
+                            onChange={e => setTeacherSalary(t.teacher, e.target.value)}
+                            placeholder="0"
+                            className="w-28 border border-gray-300 rounded-lg px-2 py-1 text-sm"
+                          />
+                          원
+                        </label>
+                        {t.salary > 0 && t.laborRate !== null && (
+                          <span className="text-xs text-gray-700 flex items-center gap-1.5">
+                            매출 대비 인건비율 <strong className="tabular-nums">{t.laborRate}%</strong>
+                            <MetricStatusBadge status={status} />
+                          </span>
+                        )}
+                        {t.salary > 0 && t.laborRate === null && (
+                          <span className="text-xs text-gray-400">수납현황에 수업료를 입력하면 인건비율이 계산됩니다</span>
+                        )}
+                      </div>
+                      {t.salary > 0 && t.neededStudents !== null && (
+                        <p className={`text-xs mt-1.5 ${t.neededStudents === 0 ? 'text-green-700' : 'text-indigo-700'}`}>
+                          {t.neededStudents === 0
+                            ? `✅ 적정 범위입니다 (인건비율 ${TEACHER_LABOR_TARGET}% 이하)`
+                            : `📌 인건비율을 ${TEACHER_LABOR_TARGET}% 이하로 낮추려면 이 선생님 반에 학생 약 ${t.neededStudents}명 추가 배정 필요 (현재 평균 수강료 ${Math.round(t.avgTuition).toLocaleString()}원 기준)`}
+                        </p>
+                      )}
+                      {t.salary === 0 && (
+                        <p className="text-xs text-gray-400 mt-1.5">월급을 입력하면 인건비율과 추가 배정 인원이 계산됩니다.</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="bg-white border border-gray-200 rounded-xl p-4">

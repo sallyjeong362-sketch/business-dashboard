@@ -3991,8 +3991,8 @@ function App() {
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <p className="text-sm font-semibold text-gray-700 mb-1">🧑‍🏫 선생님별 수익성</p>
               <p className="text-xs text-gray-400 mb-3">
-                선생님별 월급을 입력하면, 담당 반 학생 수·수업료 매출 대비 인건비율과
-                적정선({TEACHER_LABOR_TARGET}%)까지 필요한 추가 원생 수를 계산합니다. (위 비용 입력의 전체 인건비와는 별개인 참고용 분석입니다)
+                선생님별 월급을 입력하면, 담당 반 학생 전체의 수업료 <strong>청구액(실제 수납 여부와 무관한 매출)</strong> 대비
+                인건비율과 적정선({TEACHER_LABOR_TARGET}%)까지 필요한 추가 원생 수를 계산합니다. (위 비용 입력의 전체 인건비와는 별개인 참고용 분석입니다)
               </p>
               <div className="divide-y divide-gray-100">
                 {computeTeacherMetrics(data, metricsMonth).map(t => {
@@ -4011,7 +4011,7 @@ function App() {
                             <button onClick={() => setTeacherFormFor(t.teacher)} className="ml-2 text-xs text-indigo-600 hover:underline align-middle">수정</button>
                           )}
                         </div>
-                        <span className="text-xs text-gray-500">학생 {t.studentCount}명 · 담당 반 매출 {t.revenue.toLocaleString()}원</span>
+                        <span className="text-xs text-gray-500">학생 {t.studentCount}명 · 담당 반 매출 {t.revenue.toLocaleString()}원 (청구 기준, 수납 여부 무관)</span>
                       </div>
                       {teacherFormFor === t.teacher && (
                         <TeacherEditForm

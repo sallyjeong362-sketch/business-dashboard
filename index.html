@@ -597,6 +597,98 @@ function classCapacityInfo(c) {
   };
 }
 
+/* 기간 내 단어/문법시험 결과 요약 (위클리·먼슬리 리포트 알림톡용)
+   예: "단어시험 합격 2회·불합격 1회 (재시험 필요 1건) / 문법시험 합격 2회" */
+function buildPeriodTestSummary(data, studentId, startDate, endDate) {
+  const stats = {};
+  const order = [];
+  (data.vocabTests || []).forEach(v => {
+    if (v.studentId !== studentId || !v.result) return;
+    if (v.date < startDate || v.date > endDate) return;
+    const name = v.testType === '문법 복습시험' ? '문법시험' : v.testType;
+    if (!stats[name]) { stats[name] = { pass: 0, fail: 0, absent: 0, retest: 0 }; order.push(name); }
+    if (v.result === 'pass') stats[name].pass++;
+    else if (v.result === 'fail') stats[name].fail++;
+    else if (v.result === 'absent') stats[name].absent++;
+    if (v.retest === 'needed') stats[name].retest++;
+  });
+  const parts = order.map(name => {
+    const s = stats[name];
+    const bits = [];
+    if (s.pass) bits.push(`합격 ${s.pass}회`);
+    if (s.fail) bits.push(`불합격 ${s.fail}회`);
+    if (s.absent) bits.push(`미응시 ${s.absent}회`);
+    let out = `${name} ${bits.join('·')}`;
+    if (s.retest) out += ` (재시험 필요 ${s.retest}건)`;
+    return out;
+  });
+  return parts.length ? parts.join(' / ') : '시험 없음';
+}
+
+/* 먼슬리 리포트: 한 달치 리포트 데이터를 계산하고, 그 내용을 담은
+   열람 전용 링크(#r=인코딩)를 만든다. 학부모는 이 링크를 열면
+   대시보드 데이터 없이도 월간 리포트를 볼 수 있다. */
+function buildMonthlyReportInfo(data, student, monthKey) {
+  const y = parseInt(monthKey.slice(0, 4), 10);
+  const mo = parseInt(monthKey.slice(5, 7), 10);
+  const start = monthKey + '-01';
+  const lastDay = new Date(y, mo, 0).getDate();
+  const end = `${monthKey}-${String(lastDay).padStart(2, '0')}`;
+  const counts = { present: 0, late: 0, early: 0, absent: 0 };
+  let attTotal = 0, presentish = 0, hwTotal = 0, hwDone = 0;
+  for (let d = 1; d <= lastDay; d++) {
+    const ds = `${monthKey}-${String(d).padStart(2, '0')}`;
+    const entry = getAttendanceEntry(data, ds, student.classId, student.id);
+    if (entry && entry.status) {
+      attTotal++;
+      if (counts[entry.status] !== undefined) counts[entry.status]++;
+      if (entry.status === 'present' || entry.status === 'late') presentish++;
+      const hw = normalizeHomework(entry);
+      if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
+    }
+  }
+  const attendanceRate = attTotal ? Math.round((presentish / attTotal) * 100) + '%' : '기록 없음';
+  const homeworkRate = hwTotal ? Math.round((hwDone / hwTotal) * 100) + '%' : '기록 없음';
+  const testResults = buildPeriodTestSummary(data, student.id, start, end);
+  const scores = ((data.records[student.id] && data.records[student.id].scores) || [])
+    .filter(sc => sc.date >= start && sc.date <= end)
+    .slice(-6)
+    .map(sc => ({ d: sc.date, l: sc.label, s: sc.score }));
+  const monthLabel = `${y}년 ${mo}월`;
+  const payload = {
+    v: 1,
+    a: data.academyName,
+    n: student.name,
+    c: student.className,
+    m: monthLabel,
+    at: counts,
+    ar: attendanceRate,
+    hr: homeworkRate,
+    ts: testResults,
+    sc: scores,
+  };
+  return { payload, monthLabel, attendanceRate, homeworkRate, testResults, counts, scores };
+}
+
+function encodeSharedReport(payload) {
+  const json = JSON.stringify(payload);
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// 발송된 열람 링크(#r=...)를 해석 — 실패하면 null (일반 대시보드로 동작)
+const SHARED_REPORT = (() => {
+  try {
+    if (window.location.hash && window.location.hash.indexOf('#r=') === 0) {
+      let b64 = window.location.hash.slice(3).replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      const parsed = JSON.parse(decodeURIComponent(escape(atob(b64))));
+      if (parsed && parsed.v === 1 && parsed.n) return parsed;
+    }
+  } catch (e) {}
+  return null;
+})();
+
 // 인적사항 탭용: 같은 이름의 학생(여러 반에 중복 등록)을 한 사람으로 묶는다.
 // entries에는 반별 사본이 모두 들어가고, 대표 정보는 첫 사본에서 가져온다.
 function groupStudentsByName(students) {
@@ -1974,6 +2066,52 @@ function App() {
     });
   }
 
+  /* 먼슬리 리포트: 한 달치 요약 + 상세 리포트 열람 링크(버튼)를 알림톡으로 발송 */
+  const [monthlyReportMonth, setMonthlyReportMonth] = useState(currentMonthKey());
+  function sendMonthlyReport(s, info) {
+    setReportSendPending(true);
+    setReportSendError('');
+    const base = window.location.origin + window.location.pathname;
+    const reportUrl = base + '#r=' + encodeSharedReport({ ...info.payload, cm: comment || undefined });
+    sendAlimtalk(data.alimtalkProxyUrl, s.parentPhone, 'monthly_report', {
+      studentName: s.name, academyName: data.academyName, month: info.monthLabel,
+      className: s.className, attendanceRate: info.attendanceRate, homeworkRate: info.homeworkRate,
+      testResults: info.testResults, reportUrl,
+    })
+      .then(() => {
+        setData(prev => {
+          const next = JSON.parse(JSON.stringify(prev));
+          if (!next.reports[s.id]) next.reports[s.id] = [];
+          next.reports[s.id].push({ date: todayStr(), comment: `먼슬리 리포트 (${info.monthLabel}) 발송`, channel: '카카오 알림톡', phone: s.parentPhone });
+          return next;
+        });
+        setReportSendSuccessFlash(true);
+      })
+      .catch(err => setReportSendError(err.message || '발송에 실패했습니다.'))
+      .finally(() => setReportSendPending(false));
+  }
+
+  function openMonthlyReportConfirm() {
+    if (!reportData) return;
+    const s = reportData.student;
+    if (!s.parentPhone) {
+      setReportSendError('학부모 연락처가 등록되어 있지 않습니다. 인적사항 탭에서 먼저 등록해주세요.');
+      return;
+    }
+    const info = buildMonthlyReportInfo(data, s, monthlyReportMonth);
+    const preview =
+      `Monthly Report\n안녕하세요? ${s.name} 학부모님.\n${data.academyName}에서 ${info.monthLabel} 월간 학습리포트를 보내드립니다.\n\n` +
+      `■ 반: ${s.className}\n■ 출석률: ${info.attendanceRate}\n■ 숙제 제출률: ${info.homeworkRate}\n■ 단어/문법시험: ${info.testResults}\n\n` +
+      `아래 버튼을 누르면 상세 리포트를 확인할 수 있습니다.\n궁금하신 점은 학원으로 문의해 주세요.\n\n[상세 리포트 보기] ← 열람 전용 링크 버튼`;
+    setAlimtalkConfirm({
+      title: `${s.name} 먼슬리 리포트 (${info.monthLabel})`,
+      recipients: [{ name: s.name + ' 학부모', phone: s.parentPhone }],
+      previewText: preview,
+      previewNote: '메시지 하단의 버튼을 누르면 출결·시험·점수·코멘트가 담긴 열람 전용 리포트 페이지가 열립니다 (대시보드 데이터 접근 없음).',
+      doSend: () => sendMonthlyReport(s, info),
+    });
+  }
+
   function openDailyReportConfirm() {
     if (!reportData) return;
     const s = reportData.student;
@@ -2009,6 +2147,7 @@ function App() {
       `■ 기간: ${reportData.startDate} ~ ${reportData.endDate}\n` +
       `■ 출석률: ${reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음'}\n` +
       `■ 숙제 제출률: ${reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음'}\n` +
+      `■ 단어/문법시험: ${buildPeriodTestSummary(data, reportData.student.id, reportData.startDate, reportData.endDate)}\n` +
       `■ 최근 시험 점수: ${reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음'}\n` +
       `■ 강사 코멘트: ${comment || '-'}\n\n` +
       `궁금하신 점은 학원으로 문의해 주세요.`;
@@ -2551,6 +2690,7 @@ function App() {
       rangeEnd: reportData.endDate,
       attendanceRate: reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음',
       homeworkRate: reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음',
+      testResults: buildPeriodTestSummary(data, reportData.student.id, reportData.startDate, reportData.endDate),
       recentScore: reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음',
       comment: comment || '-',
     };
@@ -3501,6 +3641,44 @@ function App() {
                     <p>■ 숙제: {v.homework}</p>
                     <p>■ 시험: {v.test}</p>
                     <p>■ 최근 숙제 이행률: {v.hwRate}</p>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {reportData && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+              <p className="text-sm font-semibold text-gray-700 mb-1">📆 먼슬리 리포트 (상세 링크 버튼 알림톡)</p>
+              <p className="text-xs text-gray-400 mb-2.5">
+                한 달치 출석률·숙제·시험 요약과 함께 <strong>"상세 리포트 보기" 버튼</strong>이 달린 알림톡을 보냅니다.
+                학부모님이 버튼을 누르면 출결·시험·점수·코멘트가 담긴 열람 전용 페이지가 열려요.
+              </p>
+              <div className="flex items-end gap-2.5 flex-wrap mb-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">대상 월</label>
+                  <select value={monthlyReportMonth} onChange={e => setMonthlyReportMonth(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                    {metricsTrendMonths(currentMonthKey(), 12).slice().reverse().map(mk => (
+                      <option key={mk} value={mk}>{monthKeyLabel(mk)}{mk === currentMonthKey() ? ' (이번 달)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={openMonthlyReportConfirm}
+                  disabled={reportSendPending || !data.alimtalkProxyUrl}
+                  className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
+                >💬 먼슬리 리포트 발송</button>
+              </div>
+              {(() => {
+                const info = buildMonthlyReportInfo(data, reportData.student, monthlyReportMonth);
+                return (
+                  <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 space-y-1">
+                    <p className="font-semibold text-gray-500">{info.monthLabel} · {reportData.student.name}</p>
+                    <p>■ 출석률: {info.attendanceRate} (출석 {info.counts.present} · 지각 {info.counts.late} · 조퇴 {info.counts.early} · 결석 {info.counts.absent})</p>
+                    <p>■ 숙제 제출률: {info.homeworkRate}</p>
+                    <p>■ 단어/문법시험: {info.testResults}</p>
+                    <p>■ 시험 점수 {info.scores.length}건 · 코멘트는 위 코멘트 입력칸의 내용이 함께 담깁니다</p>
                   </div>
                 );
               })()}
@@ -5130,7 +5308,73 @@ function ScheduleCalendarGrid({ month, events, todayDateStr }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+/* 학부모용 열람 전용 월간 리포트 페이지 — 알림톡 버튼 링크(#r=...)로 열리며,
+   대시보드 데이터(localStorage) 없이 링크에 담긴 내용만 표시한다. */
+function SharedReportView({ r }) {
+  const statusMeta = [
+    ['present', '출석', 'bg-green-100 text-green-700'],
+    ['late', '지각', 'bg-yellow-100 text-yellow-700'],
+    ['early', '조퇴', 'bg-gray-100 text-gray-600'],
+    ['absent', '결석', 'bg-red-100 text-red-700'],
+  ];
+  return (
+    <div className="max-w-xl mx-auto p-4">
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 mt-6 shadow-sm">
+        <p className="text-xs font-semibold text-indigo-600 mb-1">{r.a}</p>
+        <h1 className="text-lg font-bold text-gray-900 mb-0.5">{r.n} 학생 {r.m} 학습리포트</h1>
+        <p className="text-xs text-gray-500 mb-4">{r.c}</p>
+
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-gray-500 mb-1">출석률</p>
+            <p className="text-lg font-semibold text-gray-900">{r.ar}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-gray-500 mb-1">숙제 제출률</p>
+            <p className="text-lg font-semibold text-gray-900">{r.hr}</p>
+          </div>
+        </div>
+
+        <p className="text-xs font-semibold text-gray-500 mb-1.5">출결 현황</p>
+        <div className="flex gap-1.5 flex-wrap mb-4">
+          {statusMeta.map(([key, label, cls]) => (
+            <span key={key} className={`text-xs px-2.5 py-1 rounded-full ${cls}`}>{label} {(r.at && r.at[key]) || 0}회</span>
+          ))}
+        </div>
+
+        <p className="text-xs font-semibold text-gray-500 mb-1.5">단어/문법시험</p>
+        <p className="text-sm text-gray-700 bg-gray-50 rounded-lg p-3 mb-4">{r.ts || '시험 없음'}</p>
+
+        {r.sc && r.sc.length > 0 && (
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-gray-500 mb-1.5">시험 점수</p>
+            <div className="space-y-1">
+              {r.sc.map((s, i) => (
+                <div key={i} className="flex justify-between text-sm bg-gray-50 rounded-lg px-3 py-1.5">
+                  <span className="text-gray-600">{s.d} · {s.l}</span>
+                  <span className="font-semibold text-gray-900">{s.s}점</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {r.cm && (
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-gray-500 mb-1.5">강사 코멘트</p>
+            <p className="text-sm text-gray-700 bg-indigo-50 rounded-lg p-3 whitespace-pre-wrap">{r.cm}</p>
+          </div>
+        )}
+
+        <p className="text-xs text-gray-400 pt-3 border-t border-gray-100">
+          본 페이지는 {r.a}에서 발송한 열람 전용 리포트입니다. 궁금하신 점은 학원으로 문의해 주세요.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(SHARED_REPORT ? <SharedReportView r={SHARED_REPORT} /> : <App />);
 </script>
 </body>
 </html>

@@ -91,9 +91,28 @@ ${v.academyName}에서 ${v.studentName} 학생의 주간 학습리포트를 보�
 ■ 기간: ${v.rangeStart} ~ ${v.rangeEnd}
 ■ 출석률: ${v.attendanceRate}
 ■ 숙제 제출률: ${v.homeworkRate}
+■ 단어/문법시험: ${v.testResults || "시험 없음"}
 ■ 최근 시험 점수: ${v.recentScore}
 ■ 강사 코멘트: ${v.comment || "-"}
 
+궁금하신 점은 학원으로 문의해 주세요.`,
+  },
+  // 먼슬리 리포트: 강조표기형 + "상세 리포트 보기" 웹링크 버튼.
+  // 버튼 링크(reportUrl)에는 리포트 내용이 담긴 열람 전용 주소가 들어간다.
+  monthly_report: {
+    tplCode: "여기에_승인템플릿코드",
+    subject: "Monthly Report",
+    emtitle: "Monthly Report",
+    button: { name: "상세 리포트 보기" },
+    build: (v) => `안녕하세요? ${v.studentName} 학부모님.
+${v.academyName}에서 ${v.month} 월간 학습리포트를 보내드립니다.
+
+■ 반: ${v.className}
+■ 출석률: ${v.attendanceRate}
+■ 숙제 제출률: ${v.homeworkRate}
+■ 단어/문법시험: ${v.testResults || "시험 없음"}
+
+아래 버튼을 누르면 상세 리포트를 확인할 수 있습니다.
 궁금하신 점은 학원으로 문의해 주세요.`,
   },
   notice: {
@@ -123,7 +142,7 @@ try {
   ["APIKEY", "USERID", "SENDERKEY", "SENDER"].forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) CONFIG[k] = String(fileCfg[k]).trim();
   });
-  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_UPCOMING: "payment_upcoming", TPL_DAILY: "daily_report", TPL_REPORT: "report", TPL_NOTICE: "notice" };
+  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_UPCOMING: "payment_upcoming", TPL_DAILY: "daily_report", TPL_REPORT: "report", TPL_MONTHLY: "monthly_report", TPL_NOTICE: "notice" };
   Object.keys(tplMap).forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) TEMPLATES[tplMap[k]].tplCode = String(fileCfg[k]).trim();
   });
@@ -186,6 +205,18 @@ async function sendAlimtalk(receivers, templateCode, variables) {
     params["subject_" + n] = tpl.subject;
     params["message_" + n] = tpl.build(vars);
     if (tpl.emtitle) params["emtitle_" + n] = tpl.emtitle;
+    // 템플릿에 웹링크 버튼이 등록된 경우, 승인된 버튼 이름과 함께 링크를 전달
+    if (tpl.button) {
+      params["button_" + n] = JSON.stringify({
+        button: [{
+          name: tpl.button.name,
+          linkType: "WL",
+          linkTypeName: "웹링크",
+          linkMo: vars.reportUrl || "",
+          linkPc: vars.reportUrl || "",
+        }],
+      });
+    }
   });
   const r = await postForm("kakaoapi.aligo.in", "/akv10/alimtalk/send/", params);
   if (String(r.code) !== "0") throw new Error("발송 실패: " + (r.message || JSON.stringify(r)));

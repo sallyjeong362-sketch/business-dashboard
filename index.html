@@ -716,8 +716,20 @@ function computeMetrics(data, monthKey) {
     churn = Math.max(0, prevCount + newCount - currentCount);
     churnRate = prevCount ? Math.round((churn / prevCount) * 100) : null;
   }
-  const admissionConsults = (data.counseling || []).filter(k => k.type === '입학상담' && (k.date || '').startsWith(monthKey)).length;
-  const conversionRate = admissionConsults ? Math.round((newCount / admissionConsults) * 100) : null;
+  // 상담 → 등록 전환: "입학상담을 했던 바로 그 학생"이 실제로 반에 등록된 경우만 집계
+  // (상담 기록의 학생 이름과 등록된 학생 이름이 같고, 등록일이 상담일 이후인 경우)
+  const admissionList = (data.counseling || []).filter(k => k.type === '입학상담' && (k.date || '').startsWith(monthKey));
+  const admissionConsults = admissionList.length;
+  const groupByName = {};
+  groups.forEach(g => { groupByName[g.name] = g; });
+  let convertedCount = 0;
+  admissionList.forEach(k => {
+    const g = groupByName[(k.studentName || '').trim()];
+    if (!g) return;
+    const enrolled = g.entries.some(e => !e.enrollDate || e.enrollDate >= (k.date || ''));
+    if (enrolled) convertedCount++;
+  });
+  const conversionRate = admissionConsults ? Math.round((convertedCount / admissionConsults) * 100) : null;
   // 비용을 입력하지 않은 항목은 0%로 오해되지 않도록 null(입력 필요)로 처리
   const laborRate = revenue && exp.labor ? Math.round((exp.labor / revenue) * 100) : null;
   const rentRate = revenue && exp.rent ? Math.round((exp.rent / revenue) * 100) : null;
@@ -726,7 +738,7 @@ function computeMetrics(data, monthKey) {
   const arpu = currentCount ? Math.round(revenue / currentCount) : null;
   return {
     pay, exp, totalCost, revenue, currentCount, newCount, churn, churnRate,
-    admissionConsults, conversionRate, laborRate, rentRate, profit, profitRate, arpu,
+    admissionConsults, convertedCount, conversionRate, laborRate, rentRate, profit, profitRate, arpu,
     attendanceRate: monthAttendanceRate(data, monthKey),
   };
 }
@@ -3337,10 +3349,10 @@ function App() {
                 <MetricBox label="신규 등록 (등록일 기준)" value={m.newCount + '명'} />
                 <MetricBox label="퇴원 (추정)" value={m.churn !== null ? m.churn + '명' + (m.churnRate !== null ? ' · 이탈률 ' + m.churnRate + '%' : '') : '다음 달부터 집계'} />
                 <MetricBox label="입학상담" value={m.admissionConsults + '건'} />
-                <MetricBox label="상담 → 등록 전환율" value={m.conversionRate !== null ? m.conversionRate + '%' : '—'} />
+                <MetricBox label="상담 → 등록 전환율" value={m.conversionRate !== null ? `${m.conversionRate}% (${m.admissionConsults}건 중 ${m.convertedCount}명 등록)` : '—'} />
                 <MetricBox label="평균 출석률" value={m.attendanceRate !== null ? m.attendanceRate + '%' : '기록 없음'} />
               </div>
-              <p className="text-xs text-gray-400 mt-2">퇴원은 (전월 재원생 + 신규 − 이번 달 재원생)으로 추정합니다. 재원생 수는 매달 자동 기록되어 다음 달부터 집계돼요.</p>
+              <p className="text-xs text-gray-400 mt-2">퇴원은 (전월 재원생 + 신규 − 이번 달 재원생)으로 추정합니다. 재원생 수는 매달 자동 기록되어 다음 달부터 집계돼요. 전환율은 입학상담한 학생 이름이 실제 반에 등록된 경우만 셉니다 — 상담 기록의 학생 이름과 등록 이름을 같게 적어주세요.</p>
             </div>
 
             <div className="bg-white border border-gray-200 rounded-xl p-4">

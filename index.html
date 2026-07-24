@@ -935,6 +935,7 @@ function App() {
   const [reportStartDate, setReportStartDate] = useState(daysAgoStr(6));
   const [reportEndDate, setReportEndDate] = useState(todayStr());
   const [reportSearch, setReportSearch] = useState('');
+  const [reportClassFilter, setReportClassFilter] = useState(''); // 학습리포트 반별 검색 ('' = 전체 반)
   const [reportCopyFlash, setReportCopyFlash] = useState('');
   const [comment, setComment] = useState('');
   const [newsItems, setNewsItems] = useState([]);
@@ -1636,6 +1637,36 @@ function App() {
     setAlimtalkChecked(init);
     setAlimtalkConfirm({
       title: '미납 수강료 안내',
+      recipients: recips,
+      selectable: true,
+      previewText: `안녕하세요. ${data.academyName}입니다.\n${todayStr()} 기준으로 수강료가 아직 결제되지 않아 안내드립니다.\n확인 후 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
+      doSend: phones => sendPaymentRemindersTo(phones),
+    });
+  }
+
+  /* 결제 예정 안내: 오늘·내일이 결제일인 (아직 미납인) 학생 학부모에게
+     결제 안내를 보내는 수동 발송 — 학생별 확인·선택 후 발송 */
+  function openUpcomingPaymentConfirm() {
+    const monthKey = currentMonthKey();
+    const seen = {};
+    const recips = [];
+    [
+      ...paymentAlerts.dueToday.map(s => ({ s, when: '오늘' })),
+      ...paymentAlerts.dueTomorrow.map(s => ({ s, when: '내일' })),
+    ].forEach(({ s, when }) => {
+      const t = getTuitionRecord(data, s.id, monthKey);
+      if (t.status === 'paid') return; // 이미 납부한 학생은 제외
+      if (s.parentPhone && !seen[s.parentPhone]) {
+        seen[s.parentPhone] = true;
+        recips.push({ name: `${s.name} 학부모 (${when} 결제일)`, phone: s.parentPhone });
+      }
+    });
+    if (!recips.length) { setReminderSendError('오늘·내일이 결제일인 미납 학생의 학부모 연락처가 없습니다.'); return; }
+    const init = {};
+    recips.forEach(r => { init[r.phone] = true; });
+    setAlimtalkChecked(init);
+    setAlimtalkConfirm({
+      title: '결제 예정 안내 (오늘·내일 결제일)',
       recipients: recips,
       selectable: true,
       previewText: `안녕하세요. ${data.academyName}입니다.\n${todayStr()} 기준으로 수강료가 아직 결제되지 않아 안내드립니다.\n확인 후 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
@@ -2612,15 +2643,22 @@ function App() {
           <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <p className="text-sm font-medium text-gray-900">미납 알림문자 자동발송</p>
+                <p className="text-sm font-medium text-gray-900">수납 알림톡 발송</p>
                 <p className="text-xs text-gray-500">
-                  대상 {paymentAlerts.unpaidList.length}명 · 자동발송 {data.autoPaymentReminderEnabled ? '켜짐' : '꺼짐'}
+                  미납 {paymentAlerts.unpaidList.length}명 · 오늘·내일 결제일 {paymentAlerts.dueToday.length + paymentAlerts.dueTomorrow.length}명
+                  {' · 자동발송(미납 대상) '}{data.autoPaymentReminderEnabled ? '켜짐' : '꺼짐'}
                   {data.autoPaymentReminderLastSent ? ` · 마지막 발송 ${data.autoPaymentReminderLastSent}` : ''}
                 </p>
+                <p className="text-xs text-gray-400 mt-0.5">자동발송은 결제일이 지난 미납 학생에게만 하루 1회 나갑니다. 아래 버튼은 학생별로 확인 후 보내는 수동 발송이에요.</p>
               </div>
-              <button onClick={openPaymentReminderConfirm} disabled={reminderSendPending} className="text-xs text-indigo-600 hover:underline disabled:opacity-50">
-                {reminderSendPending ? '발송 중...' : '지금 알림 발송'}
-              </button>
+              <div className="flex items-center gap-3 shrink-0">
+                <button onClick={openUpcomingPaymentConfirm} disabled={reminderSendPending} className="text-xs text-indigo-600 hover:underline disabled:opacity-50">
+                  결제 예정 안내 발송
+                </button>
+                <button onClick={openPaymentReminderConfirm} disabled={reminderSendPending} className="text-xs text-indigo-600 hover:underline disabled:opacity-50">
+                  {reminderSendPending ? '발송 중...' : '미납 알림 발송'}
+                </button>
+              </div>
             </div>
             {reminderSendError && <p className="text-xs text-red-500 mt-2">{reminderSendError}</p>}
             {reminderSendFlash && <p className="text-xs text-green-600 mt-2">{reminderSendFlash}</p>}
@@ -2979,13 +3017,30 @@ function App() {
         <div>
           {(() => {
             const q = reportSearch.trim();
-            const filtered = q ? allStudents(data).filter(s => s.name.includes(q)) : allStudents(data);
-            const visible = filtered.length ? filtered : allStudents(data);
+            // 반 필터 → 이름 검색 순서로 좁혀서 학생 선택 목록을 만든다
+            const inClass = reportClassFilter
+              ? allStudents(data).filter(s => s.classId === reportClassFilter)
+              : allStudents(data);
+            const filtered = q ? inClass.filter(s => s.name.includes(q)) : inClass;
+            const visible = filtered.length ? filtered : inClass;
             if (visible.length && !visible.some(s => s.id === reportStudentId)) {
               setTimeout(() => setReportStudentId(visible[0].id), 0);
             }
             return (
               <div className="flex items-end gap-2.5 flex-wrap mb-4">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">반 선택</label>
+                  <select
+                    value={reportClassFilter}
+                    onChange={e => setReportClassFilter(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                  >
+                    <option value="">전체 반</option>
+                    {data.classes.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">학생 검색</label>
                   <input type="text" value={reportSearch} onChange={e => setReportSearch(e.target.value)} placeholder="이름으로 검색"
@@ -4013,7 +4068,7 @@ function App() {
                   checked={data.autoPaymentReminderEnabled}
                   onChange={e => setData(prev => ({ ...prev, autoPaymentReminderEnabled: e.target.checked }))}
                 />
-                결제일 D-1/당일 및 미납 학생 대상 알림문자 자동발송 (대시보드를 열 때마다 하루 1회 확인 후 발송)
+                미납 학생 대상 알림문자 자동발송 — 결제일이 지난 미납 학생에게, 대시보드를 열 때마다 하루 1회 자동 발송 (결제일 전 안내는 수납현황 탭의 "결제 예정 안내 발송"으로 확인 후 보내세요)
               </label>
 
               <div className="mt-3 pt-3 border-t border-dashed border-gray-200">

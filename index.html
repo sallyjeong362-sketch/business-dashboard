@@ -134,15 +134,14 @@ function defaultData() {
         s8: { tuition: 450000, status: 'paid', paidDate: todayStr() },
       },
     },
-    bookFees: {
-      s1: { bookFee: 45000, bookFeeStatus: 'paid' },
-      s2: { bookFee: 45000, bookFeeStatus: 'unpaid' },
-      s3: { bookFee: 45000, bookFeeStatus: 'unpaid' },
-      s4: { bookFee: 60000, bookFeeStatus: 'paid' },
-      s5: { bookFee: 60000, bookFeeStatus: 'unpaid' },
-      s6: { bookFee: 0, bookFeeStatus: 'paid' },
-      s7: { bookFee: 0, bookFeeStatus: 'unpaid' },
-      s8: { bookFee: 0, bookFeeStatus: 'paid' },
+    bookFeesByMonth: {
+      [todayStr().slice(0, 7)]: {
+        s1: { fee: 45000, status: 'paid', paidDate: todayStr() },
+        s2: { fee: 45000, status: 'unpaid', paidDate: null },
+        s3: { fee: 45000, status: 'unpaid', paidDate: null },
+        s4: { fee: 60000, status: 'paid', paidDate: todayStr() },
+        s5: { fee: 60000, status: 'unpaid', paidDate: null },
+      },
     },
     newsProxyUrl: '',
     newsQuery: '수능 영어',
@@ -236,7 +235,25 @@ function loadData() {
         delete parsed.payments;
       }
       if (!parsed.paymentsByMonth) parsed.paymentsByMonth = {};
-      if (!parsed.bookFees) parsed.bookFees = {};
+      // Migrate one-time bookFees (bookFee/bookFeeStatus per student) into the monthly
+      // bookFeesByMonth model: the existing charge becomes this month's record, paid ones
+      // keep today's paidDate so this month's 수납액 stays consistent.
+      if (parsed.bookFees && !parsed.bookFeesByMonth) {
+        const bfMonthKey = todayStr().slice(0, 7);
+        parsed.bookFeesByMonth = { [bfMonthKey]: {} };
+        Object.keys(parsed.bookFees).forEach(sid => {
+          const b = parsed.bookFees[sid];
+          if ((b.bookFee || 0) > 0) {
+            parsed.bookFeesByMonth[bfMonthKey][sid] = {
+              fee: b.bookFee,
+              status: b.bookFeeStatus === 'paid' ? 'paid' : 'unpaid',
+              paidDate: b.bookFeeStatus === 'paid' ? todayStr() : null,
+            };
+          }
+        });
+      }
+      delete parsed.bookFees;
+      if (!parsed.bookFeesByMonth) parsed.bookFeesByMonth = {};
       if (!parsed.expensesByMonth) parsed.expensesByMonth = {};
       if (!parsed.studentSnapshots) parsed.studentSnapshots = {};
       if (!parsed.teacherSalaries) parsed.teacherSalaries = {};
@@ -641,8 +658,36 @@ function getTuitionRecord(data, studentId, monthKey) {
   return { tuition: carried ? (carried.tuition || 0) : 0, status: 'unpaid', paidDate: null };
 }
 
-function getBookFeeRecord(data, studentId) {
-  return (data.bookFees && data.bookFees[studentId]) || { bookFee: 0, bookFeeStatus: 'unpaid' };
+/* 교재비: 수업료처럼 월별 청구(bookFeesByMonth[YYYY-MM][studentId] = {fee, status, paidDate}).
+   완납한 교재비는 다음 달에 다시 나타나지 않고, 미납분은 납부할 때까지
+   다음 달로 이월 누적되어 "한 번에 결제" 대상으로 표시된다. */
+function getBookFeeMonthRecord(data, studentId, monthKey) {
+  return (data.bookFeesByMonth && data.bookFeesByMonth[monthKey] && data.bookFeesByMonth[monthKey][studentId]) || null;
+}
+
+// monthKey까지(포함) 아직 납부되지 않은 교재비 이월 누적 내역
+function bookFeeOutstanding(data, studentId, monthKey) {
+  const byMonth = data.bookFeesByMonth || {};
+  const items = [];
+  Object.keys(byMonth).sort().forEach(mk => {
+    if (mk > monthKey) return;
+    const r = byMonth[mk][studentId];
+    if (r && (r.fee || 0) > 0 && r.status !== 'paid') items.push({ monthKey: mk, fee: r.fee });
+  });
+  return { items, total: items.reduce((sum, it) => sum + it.fee, 0) };
+}
+
+// 상태 칩 표시용: 보고 있는 달의 청구 + 이월된 미납분만 (지난달 완납분은 숨김)
+function bookFeeChips(data, studentId, monthKey) {
+  const byMonth = data.bookFeesByMonth || {};
+  const items = [];
+  Object.keys(byMonth).sort().forEach(mk => {
+    if (mk > monthKey) return;
+    const r = byMonth[mk][studentId];
+    if (!r || (r.fee || 0) <= 0) return;
+    if (mk === monthKey || r.status !== 'paid') items.push({ monthKey: mk, fee: r.fee, status: r.status });
+  });
+  return items;
 }
 
 // Mutates the already-cloned `next` draft (the standard `setData(prev => { const next = ...; ... })`
@@ -657,10 +702,13 @@ function ensureTuitionRecord(next, studentId, monthKey) {
   return next.paymentsByMonth[monthKey][studentId];
 }
 
-function ensureBookFeeRecord(next, studentId) {
-  if (!next.bookFees) next.bookFees = {};
-  if (!next.bookFees[studentId]) next.bookFees[studentId] = { bookFee: 0, bookFeeStatus: 'unpaid' };
-  return next.bookFees[studentId];
+function ensureBookFeeMonthRecord(next, studentId, monthKey) {
+  if (!next.bookFeesByMonth) next.bookFeesByMonth = {};
+  if (!next.bookFeesByMonth[monthKey]) next.bookFeesByMonth[monthKey] = {};
+  if (!next.bookFeesByMonth[monthKey][studentId]) {
+    next.bookFeesByMonth[monthKey][studentId] = { fee: 0, status: 'unpaid', paidDate: null };
+  }
+  return next.bookFeesByMonth[monthKey][studentId];
 }
 
 // Before this month's due date arrives, an unpaid record isn't "미납(연체)" yet — it's simply not
@@ -680,13 +728,20 @@ function paymentDisplayStatus(student, monthKey, record) {
 
 function computePaymentSummary(data, monthKey) {
   const students = allStudents(data);
-  let paidCount = 0, totalDue = 0, totalCollected = 0, bookFeeCollected = 0;
+  let paidCount = 0, totalDue = 0, totalCollected = 0;
   students.forEach(s => {
     const t = getTuitionRecord(data, s.id, monthKey);
-    const b = getBookFeeRecord(data, s.id);
     totalDue += t.tuition || 0;
     if (t.status === 'paid') { paidCount++; totalCollected += t.tuition || 0; }
-    if (b.bookFeeStatus === 'paid') bookFeeCollected += b.bookFee || 0;
+  });
+  // 교재비 수납액: 실제로 그 달에 납부된 금액(paidDate 기준) — 이월분을 나중에 내면 낸 달에 잡힌다
+  let bookFeeCollected = 0;
+  const byMonth = data.bookFeesByMonth || {};
+  Object.keys(byMonth).forEach(mk => {
+    Object.keys(byMonth[mk]).forEach(sid => {
+      const r = byMonth[mk][sid];
+      if (r.status === 'paid' && (r.paidDate || '').startsWith(monthKey)) bookFeeCollected += r.fee || 0;
+    });
   });
   const rate = students.length ? Math.round((paidCount / students.length) * 100) : 0;
   return { paidCount, total: students.length, rate, totalDue, totalCollected, bookFeeCollected };
@@ -997,6 +1052,9 @@ function App() {
   const [bulkClassSelect, setBulkClassSelect] = useState('');
   const [bulkClassAmount, setBulkClassAmount] = useState('');
   const [bulkClassApplyFlash, setBulkClassApplyFlash] = useState('');
+  const [bookFeeClassSelect, setBookFeeClassSelect] = useState('');
+  const [bookFeeClassAmount, setBookFeeClassAmount] = useState('');
+  const [bookFeeBulkFlash, setBookFeeBulkFlash] = useState('');
   const [directorySort, setDirectorySort] = useState('name_asc');
   const [manageSort, setManageSort] = useState('name_asc');
   const [paymentSort, setPaymentSort] = useState('name_asc');
@@ -1516,23 +1574,74 @@ function App() {
   }
 
   function editBookFee(studentId) {
-    const current = getBookFeeRecord(data, studentId).bookFee || 0;
-    const amountStr = prompt('교재비 금액 (원)', String(current));
+    const monthKey = activePaymentMonthKey();
+    const current = getBookFeeMonthRecord(data, studentId, monthKey)?.fee || 0;
+    const amountStr = prompt(`${monthKeyLabel(monthKey)} 교재비 금액 (원, 0이면 청구 없음)`, String(current));
     const amount = parseInt(amountStr, 10);
-    if (isNaN(amount)) return;
+    if (isNaN(amount) || amount < 0) return;
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      ensureBookFeeRecord(next, studentId).bookFee = amount;
+      if (amount === 0) {
+        if (next.bookFeesByMonth?.[monthKey]) delete next.bookFeesByMonth[monthKey][studentId];
+      } else {
+        ensureBookFeeMonthRecord(next, studentId, monthKey).fee = amount;
+      }
       return next;
     });
   }
 
-  function setBookFeeStatus(studentId, status) {
+  // 특정 달의 교재비 완납/미납 토글 (칩 클릭)
+  function toggleBookFeeMonth(studentId, monthKey) {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
-      ensureBookFeeRecord(next, studentId).bookFeeStatus = status;
+      const r = next.bookFeesByMonth?.[monthKey]?.[studentId];
+      if (!r) return prev;
+      if (r.status === 'paid') { r.status = 'unpaid'; r.paidDate = null; }
+      else { r.status = 'paid'; r.paidDate = todayStr(); }
       return next;
     });
+  }
+
+  // 이월 누적된 미납 교재비를 한 번에 완납 처리
+  function payAllBookFees(studentId) {
+    const monthKey = activePaymentMonthKey();
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const byMonth = next.bookFeesByMonth || {};
+      Object.keys(byMonth).forEach(mk => {
+        if (mk > monthKey) return;
+        const r = byMonth[mk][studentId];
+        if (r && (r.fee || 0) > 0 && r.status !== 'paid') { r.status = 'paid'; r.paidDate = todayStr(); }
+      });
+      return next;
+    });
+  }
+
+  // 반별·월별 교재비 일괄 설정 (보는 달 기준, 미납 상태로 청구 생성)
+  function bulkSetBookFeeByClass(classId, amount) {
+    if (isNaN(amount) || amount < 0 || !classId) { setBookFeeBulkFlash(''); return; }
+    const monthKey = activePaymentMonthKey();
+    let count = 0;
+    let className = '';
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const cls = next.classes.find(c => c.id === classId);
+      if (!cls) return prev;
+      className = cls.name;
+      cls.students.forEach(s => {
+        if (amount === 0) {
+          if (next.bookFeesByMonth?.[monthKey]) delete next.bookFeesByMonth[monthKey][s.id];
+        } else {
+          const r = ensureBookFeeMonthRecord(next, s.id, monthKey);
+          r.fee = amount;
+        }
+        count++;
+      });
+      return next;
+    });
+    setBookFeeBulkFlash(amount === 0
+      ? `${className} ${count}명의 ${monthKeyLabel(monthKey)} 교재비 청구를 없앴습니다.`
+      : `${className} ${count}명에게 ${monthKeyLabel(monthKey)} 교재비 ${amount.toLocaleString()}원을 일괄 설정했습니다.`);
   }
 
   function bulkSetTuitionByGrade(grade, amount) {
@@ -1576,7 +1685,7 @@ function App() {
     if (!s) return;
     const monthKey = activePaymentMonthKey();
     const t = getTuitionRecord(data, studentId, monthKey);
-    const b = getBookFeeRecord(data, studentId);
+    const bfOut = bookFeeOutstanding(data, studentId, monthKey); // 이월 누적 미납 교재비 포함
     if (!data.paymentGatewayProxyUrl) {
       setGatewayErrorFor(prev => ({ ...prev, [studentId]: '결제선생 등 외부 결제창 프록시 URL이 설정되지 않았습니다. 관리자 탭에서 먼저 설정해주세요.' }));
       return;
@@ -1588,7 +1697,7 @@ function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         studentId, studentName: s.name, phone: s.parentPhone || s.studentPhone || '',
-        tuition: t.tuition || 0, bookFee: b.bookFee || 0, amount: (t.tuition || 0) + (b.bookFee || 0),
+        tuition: t.tuition || 0, bookFee: bfOut.total, amount: (t.tuition || 0) + bfOut.total,
       }),
     })
       .then(res => { if (!res.ok) throw new Error('요청 실패'); return res.json(); })
@@ -2820,6 +2929,33 @@ function App() {
             </div>
           )}
 
+          {data.classes.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+              <p className="text-sm font-medium text-gray-900 mb-1">📚 반별 교재비 일괄 설정 ({monthKeyLabel(activePaymentMonthKey())})</p>
+              <p className="text-xs text-gray-500 mb-2">
+                이 달에 교재비가 있는 반을 골라 금액을 설정하면 반 학생 전체에게 청구됩니다.
+                완납한 교재비는 다음 달에 다시 나오지 않고, 미납분은 낼 때까지 다음 달로 이월 누적돼요. (0원 적용 = 이 달 청구 없음)
+              </p>
+              <div className="flex gap-2 flex-wrap items-end">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">반</label>
+                  <select value={bookFeeClassSelect || data.classes[0].id} onChange={e => setBookFeeClassSelect(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                    {data.classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">교재비 (원)</label>
+                  <input type="number" min="0" value={bookFeeClassAmount} onChange={e => setBookFeeClassAmount(e.target.value)} placeholder="예: 45000"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40" />
+                </div>
+                <button onClick={() => bulkSetBookFeeByClass(bookFeeClassSelect || data.classes[0].id, parseInt(bookFeeClassAmount, 10))} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white">
+                  해당 반 전체 적용
+                </button>
+              </div>
+              {bookFeeBulkFlash && <p className="text-xs text-indigo-600 mt-2">{bookFeeBulkFlash}</p>}
+            </div>
+          )}
+
           {(() => {
             const paymentMonthKey = activePaymentMonthKey();
             const isPastMonth = paymentMonthKey !== currentMonthKey();
@@ -2858,10 +2994,11 @@ function App() {
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
                   {allStudents(data).slice().sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
                     const p = getTuitionRecord(data, s.id, paymentMonthKey);
-                    const b = getBookFeeRecord(data, s.id);
+                    const bfChips = bookFeeChips(data, s.id, paymentMonthKey);
+                    const bfOut = bookFeeOutstanding(data, s.id, paymentMonthKey);
                     return (
                       <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
-                        <div className="w-40">
+                        <div className="w-52">
                           <p className="text-sm font-medium text-gray-800">
                             {s.name}
                             {s.paymentDueDay && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 align-middle">매월 {s.paymentDueDay}일</span>}
@@ -2870,8 +3007,25 @@ function App() {
                             수업료 {p.tuition.toLocaleString()}원
                           </button>
                           <button onClick={() => editBookFee(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
-                            교재비 {(b.bookFee || 0).toLocaleString()}원
+                            이 달 교재비 {(getBookFeeMonthRecord(data, s.id, paymentMonthKey)?.fee || 0).toLocaleString()}원
                           </button>
+                          {bfChips.length > 0 && (
+                            <div className="flex gap-1 flex-wrap mt-0.5">
+                              {bfChips.map(h => (
+                                <button key={h.monthKey} onClick={() => toggleBookFeeMonth(s.id, h.monthKey)}
+                                  title="누르면 완납/미납이 바뀝니다"
+                                  className={`text-[10px] px-1.5 py-0.5 rounded-full border ${h.status === 'paid' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-orange-100 text-orange-700 border-orange-300'}`}>
+                                  {parseInt(h.monthKey.slice(5, 7), 10)}월 {h.fee.toLocaleString()}원 {h.status === 'paid' ? '완납' : '미납'}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {bfOut.total > 0 && (
+                            <p className="text-[11px] text-red-600 mt-0.5 font-medium">
+                              누적 미납 교재비 {bfOut.total.toLocaleString()}원 — 한 번에 결제 필요
+                              <button onClick={() => payAllBookFees(s.id)} className="ml-1.5 text-indigo-600 hover:underline font-normal">모두 완납 처리</button>
+                            </p>
+                          )}
                           <button onClick={() => editPaidDate(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">
                             납부일: {p.paidDate || '미체크'}
                     </button>
@@ -2896,13 +3050,13 @@ function App() {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
                       <span className="text-[11px] font-semibold text-gray-400">교재비</span>
-                      {Object.entries(BOOKFEE_STATUS).map(([key, val]) => (
-                        <button key={key}
-                          onClick={() => setBookFeeStatus(s.id, key)}
-                          className={`text-xs px-2.5 py-1 rounded-full border ${b.bookFeeStatus===key ? val.color + ' font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
-                          {val.label}
-                        </button>
-                      ))}
+                      {bfChips.length === 0 ? (
+                        <span className="text-xs px-2.5 py-1 rounded-full border bg-gray-100 text-gray-500 border-gray-300">없음</span>
+                      ) : bfOut.total > 0 ? (
+                        <span className="text-xs px-2.5 py-1 rounded-full border bg-orange-100 text-orange-700 border-orange-300 font-medium">미납 {bfOut.total.toLocaleString()}원</span>
+                      ) : (
+                        <span className="text-xs px-2.5 py-1 rounded-full border bg-green-100 text-green-700 border-green-300 font-medium">완납</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -4302,7 +4456,8 @@ function App() {
                   {allStudents(data).map(s => {
                     const monthKey = currentMonthKey();
                     const p = getTuitionRecord(data, s.id, monthKey);
-                    const b = getBookFeeRecord(data, s.id);
+                    const bfOut = bookFeeOutstanding(data, s.id, monthKey);
+                    const bMonthFee = getBookFeeMonthRecord(data, s.id, monthKey)?.fee || 0;
                     const payLabel = paymentDisplayStatus(s, monthKey, p).label;
                     return (
                       <tr key={s.id} className="border-b border-gray-50 last:border-0">
@@ -4312,8 +4467,8 @@ function App() {
                         <td className="p-2.5 text-gray-500">{s.parentPhone || '-'}</td>
                         <td className="p-2.5 text-gray-700">{(p.tuition || 0).toLocaleString()}원</td>
                         <td className="p-2.5 text-gray-700">{payLabel}</td>
-                        <td className="p-2.5 text-gray-700">{(b.bookFee || 0).toLocaleString()}원</td>
-                        <td className="p-2.5 text-gray-700">{BOOKFEE_STATUS[b.bookFeeStatus]?.label || b.bookFeeStatus}</td>
+                        <td className="p-2.5 text-gray-700">{bMonthFee.toLocaleString()}원</td>
+                        <td className="p-2.5 text-gray-700">{bfOut.total > 0 ? `미납 ${bfOut.total.toLocaleString()}원` : (bMonthFee > 0 ? '완납' : '없음')}</td>
                       </tr>
                     );
                   })}

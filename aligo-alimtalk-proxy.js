@@ -52,6 +52,18 @@ ${v.date} 기준으로 수강료가 아직 결제되지 않아 안내드립니�
 이미 결제하셨다면 이 안내는 무시해 주세요.
 궁금하신 점은 학원으로 문의해 주세요.`,
   },
+  // 결제 예정 안내: 결제일이 다가온(오늘·내일) 학생 학부모에게 미리 안내.
+  // 학생 이름·결제일이 사람마다 다르게 들어가는 개인화 발송.
+  payment_upcoming: {
+    tplCode: "여기에_승인템플릿코드",
+    subject: "수강료 결제 예정 안내",
+    build: (v) => `안녕하세요. ${v.academyName}입니다.
+${v.studentName} 학생의 수강료 결제일(${v.dueDate})이 다가와 미리 안내드립니다.
+기한 내 결제 부탁드립니다.
+
+이미 결제하셨다면 이 안내는 무시해 주세요.
+궁금하신 점은 학원으로 문의해 주세요.`,
+  },
   report: {
     tplCode: "여기에_승인템플릿코드",
     subject: "Weekly Report",
@@ -96,7 +108,7 @@ try {
   ["APIKEY", "USERID", "SENDERKEY", "SENDER"].forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) CONFIG[k] = String(fileCfg[k]).trim();
   });
-  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_REPORT: "report", TPL_NOTICE: "notice" };
+  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_UPCOMING: "payment_upcoming", TPL_REPORT: "report", TPL_NOTICE: "notice" };
   Object.keys(tplMap).forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) TEMPLATES[tplMap[k]].tplCode = String(fileCfg[k]).trim();
   });
@@ -138,8 +150,9 @@ async function sendAlimtalk(receivers, templateCode, variables) {
   const tpl = TEMPLATES[templateCode];
   if (!tpl) throw new Error("알 수 없는 템플릿: " + templateCode);
   const token = await createToken();
-  const message = tpl.build(variables || {});
   // 한 요청에 여러 명 발송 (receiver_1, message_1, receiver_2, ...)
+  // 받는 사람은 "01012345678" 같은 번호 문자열, 또는 사람마다 다른 문구가 필요할 때
+  // { phone, variables } 형태 둘 다 지원한다 (예: 결제 예정 안내의 학생 이름·결제일).
   const params = {
     apikey: CONFIG.APIKEY,
     userid: CONFIG.USERID,
@@ -148,11 +161,15 @@ async function sendAlimtalk(receivers, templateCode, variables) {
     tpl_code: tpl.tplCode,
     sender: CONFIG.SENDER,
   };
-  receivers.slice(0, 100).forEach((phone, i) => {
+  receivers.slice(0, 100).forEach((r, i) => {
     const n = i + 1;
+    const phone = typeof r === "object" && r !== null ? r.phone : r;
+    const vars = typeof r === "object" && r !== null
+      ? Object.assign({}, variables || {}, r.variables || {})
+      : (variables || {});
     params["receiver_" + n] = String(phone).replace(/[^0-9]/g, "");
     params["subject_" + n] = tpl.subject;
-    params["message_" + n] = message;
+    params["message_" + n] = tpl.build(vars);
     if (tpl.emtitle) params["emtitle_" + n] = tpl.emtitle;
   });
   const r = await postForm("kakaoapi.aligo.in", "/akv10/alimtalk/send/", params);

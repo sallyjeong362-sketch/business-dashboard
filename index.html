@@ -1652,32 +1652,53 @@ function App() {
   }
 
   /* 결제 예정 안내: 오늘·내일이 결제일인 (아직 미납인) 학생 학부모에게
-     결제 안내를 보내는 수동 발송 — 학생별 확인·선택 후 발송 */
+     결제 예정 전용 템플릿(payment_upcoming)으로 보내는 수동 발송.
+     학생 이름·결제일이 사람마다 다르게 들어가는 개인화 발송 — 확인·선택 후 전송 */
+  function sendUpcomingPaymentTo(recips) {
+    if (!recips.length) { setReminderSendError('선택된 학부모가 없습니다.'); return; }
+    setReminderSendPending(true);
+    setReminderSendError('');
+    const to = recips.map(r => ({
+      phone: r.phone,
+      variables: { academyName: data.academyName, studentName: r.studentName, dueDate: r.dueDate },
+    }));
+    sendAlimtalk(data.alimtalkProxyUrl, to, 'payment_upcoming', {})
+      .then(() => setReminderSendFlash(`${recips.length}명에게 결제 예정 안내를 발송했습니다.`))
+      .catch(err => setReminderSendError(err.message || '발송에 실패했습니다.'))
+      .finally(() => setReminderSendPending(false));
+  }
+
   function openUpcomingPaymentConfirm() {
     const monthKey = currentMonthKey();
+    const fmtDate = d => `${d.getMonth() + 1}월 ${d.getDate()}일`;
+    const todayD = new Date();
+    const tomorrowD = new Date(todayD);
+    tomorrowD.setDate(tomorrowD.getDate() + 1);
     const seen = {};
     const recips = [];
     [
-      ...paymentAlerts.dueToday.map(s => ({ s, when: '오늘' })),
-      ...paymentAlerts.dueTomorrow.map(s => ({ s, when: '내일' })),
-    ].forEach(({ s, when }) => {
+      ...paymentAlerts.dueToday.map(s => ({ s, when: '오늘', dueDate: fmtDate(todayD) })),
+      ...paymentAlerts.dueTomorrow.map(s => ({ s, when: '내일', dueDate: fmtDate(tomorrowD) })),
+    ].forEach(({ s, when, dueDate }) => {
       const t = getTuitionRecord(data, s.id, monthKey);
       if (t.status === 'paid') return; // 이미 납부한 학생은 제외
       if (s.parentPhone && !seen[s.parentPhone]) {
         seen[s.parentPhone] = true;
-        recips.push({ name: `${s.name} 학부모 (${when} 결제일)`, phone: s.parentPhone });
+        recips.push({ name: `${s.name} 학부모 (${when} 결제일)`, phone: s.parentPhone, studentName: s.name, dueDate });
       }
     });
     if (!recips.length) { setReminderSendError('오늘·내일이 결제일인 미납 학생의 학부모 연락처가 없습니다.'); return; }
     const init = {};
     recips.forEach(r => { init[r.phone] = true; });
     setAlimtalkChecked(init);
+    const first = recips[0];
     setAlimtalkConfirm({
       title: '결제 예정 안내 (오늘·내일 결제일)',
       recipients: recips,
       selectable: true,
-      previewText: `안녕하세요. ${data.academyName}입니다.\n${todayStr()} 기준으로 수강료가 아직 결제되지 않아 안내드립니다.\n확인 후 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
-      doSend: phones => sendPaymentRemindersTo(phones),
+      previewText: `안녕하세요. ${data.academyName}입니다.\n${first.studentName} 학생의 수강료 결제일(${first.dueDate})이 다가와 미리 안내드립니다.\n기한 내 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
+      previewNote: '미리보기는 첫 번째 학생 기준이며, 실제로는 학생마다 이름과 결제일이 각자 맞게 들어갑니다.',
+      doSend: phones => sendUpcomingPaymentTo(recips.filter(r => phones.includes(r.phone))),
     });
   }
 
@@ -2405,6 +2426,7 @@ function App() {
           </div>
           <p className="text-xs font-semibold text-gray-500 mb-1">발송 문구 미리보기</p>
           <p className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded-lg p-3">{alimtalkConfirm.previewText}</p>
+          {alimtalkConfirm.previewNote && <p className="text-xs text-gray-400 mt-1">{alimtalkConfirm.previewNote}</p>}
           <p className="text-xs text-gray-400 mt-1.5">실제 발송은 알리고에 승인된 템플릿 형식으로 전송됩니다.</p>
           <div className="flex justify-end gap-2 mt-3">
             <button onClick={() => setAlimtalkConfirm(null)} className="px-4 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600">취소</button>

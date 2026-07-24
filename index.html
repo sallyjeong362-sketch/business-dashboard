@@ -350,6 +350,37 @@ const HW_META = {
   unchecked: { label: '미확인 (결석)', cls: 'bg-gray-200 text-gray-600' },
 };
 
+/* 데일리 리포트: 특정 날짜의 출결·수업 진도·숙제·시험 결과와
+   최근 30일 숙제 이행률을 알림톡 변수로 구성 */
+function buildDailyReportVars(data, student, dateStr) {
+  const entry = getAttendanceEntry(data, dateStr, student.classId, student.id);
+  const attendance = entry && entry.status && STATUS[entry.status] ? STATUS[entry.status].label : '기록 없음';
+  const lesson = getLessonLog(data, dateStr, student.classId) || '기록 없음';
+  const hw = normalizeHomework(entry);
+  const assigned = getClassHomework(data, dateStr, student.classId);
+  const hwParts = [hw ? '검사 ' + (HW_META[hw] || HW_META.missing).label : '검사 기록 없음'];
+  if (assigned) hwParts.push('오늘 숙제: ' + assigned);
+  const homework = hwParts.join(' · ');
+  const tests = (data.vocabTests || []).filter(v => v.studentId === student.id && v.date === dateStr && v.result);
+  const test = tests.length
+    ? tests.map(v => `${v.testType} ${(VOCAB_RESULT_META[v.result] || VOCAB_RESULT_META.fail).label}${v.result !== 'absent' && v.wrongCount ? ` (${v.wrongCount}개 틀림)` : ''}`).join(' / ')
+    : '시험 없음';
+  // 최근 30일(해당 날짜 포함) 숙제 이행률 — 미확인 포함, 완료만 제출로 인정
+  let total = 0, done = 0;
+  const end = new Date(dateStr + 'T00:00:00');
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(end);
+    d.setDate(d.getDate() - i);
+    const ds = new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const h = normalizeHomework(getAttendanceEntry(data, ds, student.classId, student.id));
+    if (h) { total++; if (h === 'done') done++; }
+  }
+  const hwRate = total ? Math.round((done / total) * 100) + '%' : '기록 없음';
+  const [, m, dd] = dateStr.split('-');
+  const dateLabel = `${parseInt(m, 10)}월 ${parseInt(dd, 10)}일`;
+  return { attendance, lesson, homework, test, hwRate, dateLabel };
+}
+
 function getLessonLog(data, date, classId) {
   return data.lessonLogs?.[date]?.[classId] || '';
 }
@@ -1699,6 +1730,48 @@ function App() {
       previewText: `안녕하세요. ${data.academyName}입니다.\n${first.studentName} 학생의 수강료 결제일(${first.dueDate})이 다가와 미리 안내드립니다.\n기한 내 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
       previewNote: '미리보기는 첫 번째 학생 기준이며, 실제로는 학생마다 이름과 결제일이 각자 맞게 들어갑니다.',
       doSend: phones => sendUpcomingPaymentTo(recips.filter(r => phones.includes(r.phone))),
+    });
+  }
+
+  /* 데일리 리포트: 선택한 날짜 하루치(출결·진도·숙제·시험·이행률)만 발송 */
+  const [dailyReportDate, setDailyReportDate] = useState(todayStr());
+  function sendDailyReport(s, v) {
+    setReportSendPending(true);
+    setReportSendError('');
+    sendAlimtalk(data.alimtalkProxyUrl, s.parentPhone, 'daily_report', {
+      academyName: data.academyName, studentName: s.name, date: v.dateLabel,
+      attendance: v.attendance, lesson: v.lesson, homework: v.homework, test: v.test, hwRate: v.hwRate,
+    })
+      .then(() => {
+        setData(prev => {
+          const next = JSON.parse(JSON.stringify(prev));
+          if (!next.reports[s.id]) next.reports[s.id] = [];
+          next.reports[s.id].push({ date: todayStr(), comment: `데일리 리포트 (${v.dateLabel}) 발송`, channel: '카카오 알림톡', phone: s.parentPhone });
+          return next;
+        });
+        setReportSendSuccessFlash(true);
+      })
+      .catch(err => setReportSendError(err.message || '발송에 실패했습니다.'))
+      .finally(() => setReportSendPending(false));
+  }
+
+  function openDailyReportConfirm() {
+    if (!reportData) return;
+    const s = reportData.student;
+    if (!s.parentPhone) {
+      setReportSendError('학부모 연락처가 등록되어 있지 않습니다. 인적사항 탭에서 먼저 등록해주세요.');
+      return;
+    }
+    const v = buildDailyReportVars(data, s, dailyReportDate);
+    const preview =
+      `안녕하세요? ${s.name} 학부모님.\n${data.academyName} ${v.dateLabel} 데일리 리포트입니다.\n\n` +
+      `■ 출결: ${v.attendance}\n■ 수업 진도: ${v.lesson}\n■ 숙제: ${v.homework}\n■ 시험: ${v.test}\n■ 최근 숙제 이행률: ${v.hwRate}\n\n` +
+      `궁금하신 점은 학원으로 문의해 주세요.`;
+    setAlimtalkConfirm({
+      title: `${s.name} 데일리 리포트 (${v.dateLabel})`,
+      recipients: [{ name: s.name + ' 학부모', phone: s.parentPhone }],
+      previewText: preview,
+      doSend: () => sendDailyReport(s, v),
     });
   }
 
@@ -3113,6 +3186,39 @@ function App() {
               </div>
             );
           })()}
+
+          {reportData && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+              <p className="text-sm font-semibold text-gray-700 mb-1">📅 데일리 리포트 (하루치 알림)</p>
+              <p className="text-xs text-gray-400 mb-2.5">선택한 날짜의 출결·수업 진도·숙제·시험 결과와 최근 30일 숙제 이행률만 담아 학부모님께 알림톡으로 보냅니다.</p>
+              <div className="flex items-end gap-2.5 flex-wrap mb-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">날짜</label>
+                  <input type="date" value={dailyReportDate} onChange={e => setDailyReportDate(e.target.value || todayStr())}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+                <button
+                  onClick={openDailyReportConfirm}
+                  disabled={reportSendPending || !data.alimtalkProxyUrl}
+                  className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
+                >💬 카카오 알림톡 발송</button>
+                {!data.alimtalkProxyUrl && <span className="text-xs text-gray-400">관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요</span>}
+              </div>
+              {(() => {
+                const v = buildDailyReportVars(data, reportData.student, dailyReportDate);
+                return (
+                  <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 space-y-1">
+                    <p className="font-semibold text-gray-500">{v.dateLabel} · {reportData.student.name}</p>
+                    <p>■ 출결: {v.attendance}</p>
+                    <p>■ 수업 진도: {v.lesson}</p>
+                    <p>■ 숙제: {v.homework}</p>
+                    <p>■ 시험: {v.test}</p>
+                    <p>■ 최근 숙제 이행률: {v.hwRate}</p>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           {reportData && (
             <div className="bg-white border border-gray-200 rounded-xl p-5" id="reportPrintArea">

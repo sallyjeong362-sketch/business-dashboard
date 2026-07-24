@@ -64,6 +64,21 @@ ${v.studentName} 학생의 수강료 결제일(${v.dueDate})이 다가와 미리
 이미 결제하셨다면 이 안내는 무시해 주세요.
 궁금하신 점은 학원으로 문의해 주세요.`,
   },
+  // 데일리 리포트: 하루치 출결·수업 진도·숙제·시험 결과 + 최근 숙제 이행률
+  daily_report: {
+    tplCode: "여기에_승인템플릿코드",
+    subject: "데일리 리포트",
+    build: (v) => `안녕하세요? ${v.studentName} 학부모님.
+${v.academyName} ${v.date} 데일리 리포트입니다.
+
+■ 출결: ${v.attendance}
+■ 수업 진도: ${v.lesson}
+■ 숙제: ${v.homework}
+■ 시험: ${v.test}
+■ 최근 숙제 이행률: ${v.hwRate}
+
+궁금하신 점은 학원으로 문의해 주세요.`,
+  },
   report: {
     tplCode: "여기에_승인템플릿코드",
     subject: "Weekly Report",
@@ -108,7 +123,7 @@ try {
   ["APIKEY", "USERID", "SENDERKEY", "SENDER"].forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) CONFIG[k] = String(fileCfg[k]).trim();
   });
-  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_UPCOMING: "payment_upcoming", TPL_REPORT: "report", TPL_NOTICE: "notice" };
+  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_UPCOMING: "payment_upcoming", TPL_DAILY: "daily_report", TPL_REPORT: "report", TPL_NOTICE: "notice" };
   Object.keys(tplMap).forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) TEMPLATES[tplMap[k]].tplCode = String(fileCfg[k]).trim();
   });

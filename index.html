@@ -1751,6 +1751,14 @@ function App() {
      먼저 보여준 뒤 "이대로 발송"을 눌러야 실제 발송한다. */
   const [alimtalkConfirm, setAlimtalkConfirm] = useState(null);
   const [alimtalkChecked, setAlimtalkChecked] = useState({}); // 선택 발송용: { phone: 체크여부 }
+  // 발송 버튼이 화면 아래쪽에 있어도 확인 창이 바로 보이도록, 확인 창이 열리면 그 위치로 스크롤
+  useEffect(() => {
+    if (!alimtalkConfirm) return;
+    const el = document.getElementById('alimtalkConfirmPanel');
+    if (el && typeof el.scrollIntoView === 'function') {
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+    }
+  }, [alimtalkConfirm]);
   const [testSendPhone, setTestSendPhone] = useState('');
   const [testSendPending, setTestSendPending] = useState(false);
   const [testSendFlash, setTestSendFlash] = useState('');
@@ -1852,6 +1860,7 @@ function App() {
 
   /* 데일리 리포트: 선택한 날짜 하루치(출결·진도·숙제·시험·이행률)만 발송 */
   const [dailyReportDate, setDailyReportDate] = useState(todayStr());
+  const [reportDetailOpen, setReportDetailOpen] = useState(true);
   function sendDailyReport(s, v) {
     setReportSendPending(true);
     setReportSendError('');
@@ -1870,6 +1879,67 @@ function App() {
       })
       .catch(err => setReportSendError(err.message || '발송에 실패했습니다.'))
       .finally(() => setReportSendPending(false));
+  }
+
+  /* 데일리 리포트 반 전체 발송: 반 학생 전원에게 각자의 하루치 데이터로 개인화 발송.
+     학생별 체크박스로 확인·선택 후 전송 */
+  function sendDailyReportBulk(recips) {
+    if (!recips.length) { setReportSendError('선택된 학부모가 없습니다.'); return; }
+    setReportSendPending(true);
+    setReportSendError('');
+    const to = recips.map(r => ({
+      phone: r.phone,
+      variables: {
+        academyName: data.academyName, studentName: r.student.name, date: r.vars.dateLabel,
+        attendance: r.vars.attendance, lesson: r.vars.lesson, homework: r.vars.homework,
+        test: r.vars.test, hwRate: r.vars.hwRate,
+      },
+    }));
+    sendAlimtalk(data.alimtalkProxyUrl, to, 'daily_report', {})
+      .then(() => {
+        setData(prev => {
+          const next = JSON.parse(JSON.stringify(prev));
+          recips.forEach(r => {
+            if (!next.reports[r.student.id]) next.reports[r.student.id] = [];
+            next.reports[r.student.id].push({ date: todayStr(), comment: `데일리 리포트 (${r.vars.dateLabel}) 반 전체 발송`, channel: '카카오 알림톡', phone: r.phone });
+          });
+          return next;
+        });
+        setReportSendSuccessFlash(true);
+      })
+      .catch(err => setReportSendError(err.message || '발송에 실패했습니다.'))
+      .finally(() => setReportSendPending(false));
+  }
+
+  function openDailyReportBulkConfirm() {
+    if (!reportData) return;
+    const classId = reportClassFilter || reportData.student.classId;
+    const cls = data.classes.find(c => c.id === classId);
+    if (!cls) return;
+    const seen = {};
+    const recips = [];
+    cls.students.forEach(st => {
+      if (!st.parentPhone || seen[st.parentPhone]) return;
+      seen[st.parentPhone] = true;
+      const student = { ...st, classId: cls.id, className: cls.name };
+      recips.push({ name: `${st.name} 학부모`, phone: st.parentPhone, student, vars: buildDailyReportVars(data, student, dailyReportDate) });
+    });
+    if (!recips.length) { setReportSendError(`${cls.name}에 학부모 연락처가 등록된 학생이 없습니다.`); return; }
+    const init = {};
+    recips.forEach(r => { init[r.phone] = true; });
+    setAlimtalkChecked(init);
+    const first = recips[0];
+    setAlimtalkConfirm({
+      title: `${cls.name} 데일리 리포트 반 전체 발송 (${first.vars.dateLabel})`,
+      recipients: recips.map(r => ({ name: r.name, phone: r.phone })),
+      selectable: true,
+      previewText:
+        `안녕하세요? ${first.student.name} 학부모님.\n${data.academyName} ${first.vars.dateLabel} 데일리 리포트입니다.\n\n` +
+        `■ 출결: ${first.vars.attendance}\n■ 수업 진도: ${first.vars.lesson}\n■ 숙제: ${first.vars.homework}\n■ 시험: ${first.vars.test}\n■ 최근 숙제 이행률: ${first.vars.hwRate}\n\n` +
+        `궁금하신 점은 학원으로 문의해 주세요.`,
+      previewNote: '미리보기는 첫 번째 학생 기준이며, 실제로는 학생마다 각자의 출결·진도·숙제·시험 내용으로 발송됩니다.',
+      doSend: phones => sendDailyReportBulk(recips.filter(r => phones.includes(r.phone))),
+    });
   }
 
   function openDailyReportConfirm() {
@@ -2579,7 +2649,7 @@ function App() {
           setAlimtalkChecked(next);
         };
         return (
-        <div className="bg-white border-2 border-indigo-300 rounded-xl p-4 mb-4">
+        <div className="bg-white border-2 border-indigo-300 rounded-xl p-4 mb-4" id="alimtalkConfirmPanel">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-semibold text-gray-900">📨 알림톡 발송 확인 — {alimtalkConfirm.title}</p>
             <button onClick={() => setAlimtalkConfirm(null)} className="text-xs text-gray-400 hover:text-gray-600">취소 ×</button>
@@ -3364,6 +3434,12 @@ function App() {
                   disabled={reportSendPending || !data.alimtalkProxyUrl}
                   className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
                 >💬 카카오 알림톡 발송</button>
+                <button
+                  onClick={openDailyReportBulkConfirm}
+                  disabled={reportSendPending || !data.alimtalkProxyUrl}
+                  title="위에서 반을 선택했으면 그 반, 아니면 선택한 학생의 반 전체에게 각자의 데일리 리포트를 보냅니다"
+                  className="px-3.5 py-1.5 text-sm rounded-lg border border-yellow-400 text-yellow-800 font-medium hover:bg-yellow-50 disabled:opacity-50"
+                >📢 반 전체 발송</button>
                 {!data.alimtalkProxyUrl && <span className="text-xs text-gray-400">관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요</span>}
               </div>
               {(() => {
@@ -3384,6 +3460,13 @@ function App() {
 
           {reportData && (
             <div className="bg-white border border-gray-200 rounded-xl p-5" id="reportPrintArea">
+              <div className="report-tools flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-gray-700">📊 {reportData.student.name} 학습리포트 상세</p>
+                <button onClick={() => setReportDetailOpen(o => !o)} className="text-xs text-indigo-600 hover:underline shrink-0">
+                  {reportDetailOpen ? '상세 접기 ▲' : '상세 펴기 ▼'}
+                </button>
+              </div>
+              {reportDetailOpen && (<React.Fragment>
               <div className="report-tools flex gap-2 flex-wrap mb-4">
                 <button onClick={() => window.print()} className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300">🖨 인쇄 / PDF 저장</button>
                 <a
@@ -3578,6 +3661,7 @@ function App() {
                   ))}
                 </div>
               )}
+              </React.Fragment>)}
             </div>
           )}
         </div>

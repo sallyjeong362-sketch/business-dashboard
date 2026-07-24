@@ -974,6 +974,23 @@ function App() {
       },
     }));
   }
+  /* 선생님 정보 수정: 이름 변경은 담당한 모든 반에 반영, 담당 반 체크로 배정 변경 */
+  const [teacherFormFor, setTeacherFormFor] = useState(null); // 선생님 이름 | null
+  function saveTeacherInfo(oldName, newName, salary, classIds) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next.classes.forEach(c => {
+        const cur = (c.teacher || '').trim() || '담당 미지정';
+        if (classIds.includes(c.id)) c.teacher = newName;
+        else if (cur === oldName) c.teacher = '';
+      });
+      if (!next.teacherSalaries) next.teacherSalaries = {};
+      if (oldName !== newName) delete next.teacherSalaries[oldName];
+      next.teacherSalaries[newName] = salary;
+      return next;
+    });
+    setTeacherFormFor(null);
+  }
   const [paymentViewMonth, setPaymentViewMonth] = useState(null);
   const [openLessonLogClasses, setOpenLessonLogClasses] = useState({});
   const [openLessonLogTeachers, setOpenLessonLogTeachers] = useState({});
@@ -3415,9 +3432,24 @@ function App() {
                           {t.classNames.map(cn => (
                             <span key={cn} className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 align-middle">{cn}</span>
                           ))}
+                          {teacherFormFor === t.teacher ? (
+                            <button onClick={() => setTeacherFormFor(null)} className="ml-2 text-xs text-gray-400 hover:underline align-middle">닫기</button>
+                          ) : (
+                            <button onClick={() => setTeacherFormFor(t.teacher)} className="ml-2 text-xs text-indigo-600 hover:underline align-middle">수정</button>
+                          )}
                         </div>
                         <span className="text-xs text-gray-500">학생 {t.studentCount}명 · 담당 반 매출 {t.revenue.toLocaleString()}원</span>
                       </div>
+                      {teacherFormFor === t.teacher && (
+                        <TeacherEditForm
+                          name={t.teacher}
+                          salary={t.salary}
+                          classes={data.classes}
+                          selectedClassIds={data.classes.filter(c => ((c.teacher || '').trim() || '담당 미지정') === t.teacher).map(c => c.id)}
+                          onSave={(newName, salary, classIds) => saveTeacherInfo(t.teacher, newName, salary, classIds)}
+                          onCancel={() => setTeacherFormFor(null)}
+                        />
+                      )}
                       <div className="flex items-center gap-3 flex-wrap">
                         <label className="text-xs text-gray-600 flex items-center gap-1.5">
                           월급
@@ -4090,6 +4122,46 @@ function MetricStatusBadge({ status }) {
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: t.dot, display: 'inline-block' }} />
       {status.label}
     </span>
+  );
+}
+
+/* 경영지표: 선생님 정보(이름·월급·담당 반)를 한 화면에서 수정하는 폼 */
+function TeacherEditForm({ name, salary, classes, selectedClassIds, onSave, onCancel }) {
+  const [f, setF] = useState({ name: name === '담당 미지정' ? '' : name, salary: salary || '' });
+  const [assign, setAssign] = useState(selectedClassIds || []);
+  const set = k => e => setF(prev => ({ ...prev, [k]: e.target.value }));
+  const toggleAssign = id => setAssign(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const inputCls = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm mt-1 bg-white';
+  return (
+    <div className="w-full bg-indigo-50/60 border border-indigo-200 rounded-xl p-3 mt-2">
+      <div className="grid grid-cols-2 gap-2.5">
+        <label className="text-xs text-gray-600">선생님 이름
+          <input value={f.name} onChange={set('name')} className={inputCls} />
+        </label>
+        <label className="text-xs text-gray-600">월급 (원)
+          <input type="number" min="0" step="100000" value={f.salary} onChange={set('salary')} placeholder="0" className={inputCls} />
+        </label>
+      </div>
+      <div className="mt-3 pt-3 border-t border-dashed border-indigo-200">
+        <p className="text-xs font-semibold text-gray-600 mb-1.5">담당 반 (체크한 반의 담당 선생님으로 지정됩니다)</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+          {classes.map(c => (
+            <label key={c.id} className="text-xs text-gray-700 flex items-center gap-1.5">
+              <input type="checkbox" checked={assign.includes(c.id)} onChange={() => toggleAssign(c.id)} />
+              {c.name}
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-gray-400 mt-1.5">체크를 해제한 반은 "담당 미지정"이 됩니다. 이름을 바꾸면 담당 반·업무일지 표시에 모두 반영돼요.</p>
+      </div>
+      <div className="flex gap-2 mt-3">
+        <button
+          disabled={!f.name.trim()}
+          onClick={() => onSave(f.name.trim(), f.salary === '' ? 0 : Math.max(0, parseInt(f.salary, 10) || 0), assign)}
+          className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">저장</button>
+        <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">취소</button>
+      </div>
+    </div>
   );
 }
 

@@ -2768,10 +2768,13 @@ function App() {
                 <div key={g.name} className="px-4 py-3">
                   <div className="flex items-center justify-between text-sm flex-wrap gap-2">
                     <div>
-                      <span className="font-medium text-gray-800">{g.name}</span>
+                      <span className={`font-medium ${s.withdrawDate ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{g.name}</span>
                       {g.entries.map(e => (
                         <span key={e.id} className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 align-middle">{e.className}</span>
                       ))}
+                      {s.withdrawDate && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 align-middle">퇴소 {s.withdrawDate}</span>
+                      )}
                       <p className="text-xs text-gray-500 mt-0.5">
                         {[s.grade, s.school, s.parentPhone].filter(Boolean).join(' · ')}
                       </p>
@@ -3215,6 +3218,7 @@ function App() {
                                     s.grade,
                                     s.parentPhone,
                                     s.enrollDate && `등록 ${s.enrollDate}`,
+                                    s.withdrawDate && `퇴소 ${s.withdrawDate}`,
                                     s.paymentDueDay && `매월 ${s.paymentDueDay}일 결제`,
                                   ].filter(Boolean).join(' · ')}
                                 </p>
@@ -4777,6 +4781,7 @@ function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, on
     parentPhone: student.parentPhone || '',
     studentPhone: student.studentPhone || '',
     enrollDate: student.enrollDate || '',
+    withdrawDate: student.withdrawDate || '',
     paymentDueDay: student.paymentDueDay || '',
     memo: student.memo || '',
   });
@@ -4813,6 +4818,9 @@ function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, on
         </label>
         <label className="text-xs text-gray-600">등록일자
           <input type="date" value={f.enrollDate} onChange={set('enrollDate')} className={inputCls} />
+        </label>
+        <label className="text-xs text-gray-600">퇴소일자 (그만둔 경우)
+          <input type="date" value={f.withdrawDate} onChange={set('withdrawDate')} className={inputCls} />
         </label>
         <label className="text-xs text-gray-600">메모 (특이사항)
           <input value={f.memo} onChange={set('memo')} className={inputCls} />

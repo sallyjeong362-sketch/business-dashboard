@@ -974,6 +974,16 @@ function App() {
       },
     }));
   }
+  /* 반 관리에서 반 이름·담당 선생님·강의실 인라인 수정 */
+  const [classFormFor, setClassFormFor] = useState(null); // classId | null
+  function saveClassInfo(classId, fields) {
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => c.id === classId ? { ...c, ...fields } : c),
+    }));
+    setClassFormFor(null);
+  }
+
   /* 선생님 정보 수정: 이름 변경은 담당한 모든 반에 반영, 담당 반 체크로 배정 변경 */
   const [teacherFormFor, setTeacherFormFor] = useState(null); // 선생님 이름 | null
   function saveTeacherInfo(oldName, newName, salary, classIds) {
@@ -2722,12 +2732,27 @@ function App() {
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <button
+                      onClick={e => { e.stopPropagation(); setClassFormFor(classFormFor === c.id ? null : c.id); }}
+                      className="text-xs text-indigo-600 hover:underline"
+                    >{classFormFor === c.id ? '닫기' : '정보 수정'}</button>
+                    <button
                       onClick={e => { e.stopPropagation(); deleteClass(c.id); }}
                       className="text-xs text-red-500 hover:underline"
                     >반 삭제</button>
                     <span className={`text-xs text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
                   </div>
                 </div>
+                {classFormFor === c.id && (
+                  <ClassEditForm
+                    cls={c}
+                    teacherNames={Array.from(new Set([
+                      ...data.classes.map(x => (x.teacher || '').trim()).filter(Boolean),
+                      ...Object.keys(data.teacherSalaries || {}),
+                    ]))}
+                    onSave={fields => saveClassInfo(c.id, fields)}
+                    onCancel={() => setClassFormFor(null)}
+                  />
+                )}
                 {expanded && (
                   <>
                     <div className="space-y-1.5 mt-3 mb-2">
@@ -4122,6 +4147,44 @@ function MetricStatusBadge({ status }) {
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: t.dot, display: 'inline-block' }} />
       {status.label}
     </span>
+  );
+}
+
+/* 반 관리: 반 이름·담당 선생님·강의실을 한 화면에서 수정하는 폼
+   (시간·요일 변경은 기존 관리자 탭의 반 정보 수정에서 가능) */
+function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
+  const [f, setF] = useState({
+    name: cls.name || '',
+    teacher: cls.teacher || '',
+    room: cls.room || '',
+  });
+  const set = k => e => setF(prev => ({ ...prev, [k]: e.target.value }));
+  const inputCls = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm mt-1 bg-white';
+  return (
+    <div className="w-full bg-indigo-50/60 border border-indigo-200 rounded-xl p-3 mt-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+        <label className="text-xs text-gray-600">반 이름
+          <input value={f.name} onChange={set('name')} className={inputCls} />
+        </label>
+        <label className="text-xs text-gray-600">담당 선생님
+          <input value={f.teacher} onChange={set('teacher')} list="classTeacherList" placeholder="예: 김선생" className={inputCls} />
+          <datalist id="classTeacherList">
+            {teacherNames.map(n => <option key={n} value={n} />)}
+          </datalist>
+        </label>
+        <label className="text-xs text-gray-600">강의실
+          <input value={f.room} onChange={set('room')} placeholder="예: 301호" className={inputCls} />
+        </label>
+      </div>
+      <p className="text-xs text-gray-400 mt-2">담당 선생님을 바꾸면 경영지표의 선생님별 수익성·업무일지 분류에 바로 반영됩니다. 수업 시간·요일 변경은 관리자 탭의 반 정보 수정에서 할 수 있어요.</p>
+      <div className="flex gap-2 mt-3">
+        <button
+          disabled={!f.name.trim()}
+          onClick={() => onSave({ name: f.name.trim(), teacher: f.teacher.trim(), room: f.room.trim() })}
+          className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">저장</button>
+        <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">취소</button>
+      </div>
+    </div>
   );
 }
 

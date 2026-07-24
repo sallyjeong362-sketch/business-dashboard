@@ -2132,8 +2132,9 @@ function App() {
         if (statusCounts[entry.status] !== undefined) statusCounts[entry.status]++;
         if (entry.status === 'present' || entry.status === 'late') presentCount++;
         const hw = normalizeHomework(entry);
-        // 미확인(unchecked, 결석 등)은 검사 자체를 못 한 날이라 이행률 계산에서 제외
-        if (hw === 'done' || hw === 'missing') { hwTotal++; if (hw === 'done') hwDone++; }
+        // 미확인(unchecked, 결석 등)도 이행률 분모에 포함 — 완료만 제출로 인정해
+        // 결석으로 검사받지 못한 날도 제출률이 깎이게 한다 (학부모 경각심 목적)
+        if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
         attendanceDetails.push({
           date: d, status: entry.status, note: entry.note || '', hw, hwNote: entry.homeworkNote || '',
           attitude: entry.attitude || '', lesson: getLessonLog(data, d, student.classId),

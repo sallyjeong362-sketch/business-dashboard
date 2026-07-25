@@ -344,7 +344,120 @@ function saveData(data) {
   if (!data.studentSnapshots) data.studentSnapshots = {};
   data.studentSnapshots[todayStr().slice(0, 7)] =
     groupStudentsByName(allStudents(data).filter(s => isActiveStudent(s, todayStr()))).length;
+  // 원격(다른 기기)에서 받아온 데이터를 반영하는 저장이면 시각을 새로 찍지 않는다
+  // — 찍으면 두 기기가 서로 "내가 더 최신"이라며 계속 주고받는 루프가 생긴다.
+  if (syncState.applyingRemote) {
+    syncState.applyingRemote = false;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return;
+  }
+  // 내용이 그대로면 시각을 새로 찍지 않는다 — 페이지를 "열기만" 한 기기가
+  // 최신으로 오인되어 다른 기기의 실제 수정을 덮어쓰는 것을 막는다.
+  const prevRaw = localStorage.getItem(STORAGE_KEY);
+  if (prevRaw) {
+    try {
+      const stripTs = obj => { const c = { ...obj }; delete c._updatedAt; return JSON.stringify(c); };
+      if (stripTs(JSON.parse(prevRaw)) === stripTs(data)) return;
+    } catch (e) {}
+  }
+  data._updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  scheduleSyncPush();
+}
+
+/* ---- PC ↔ 모바일 실시간 동기화 ----
+   원장님 소유의 GitHub "비공개 저장소"를 데이터 금고로 사용한다.
+   저장할 때마다 저장소의 data.json에 올리고(푸시), 주기적으로 내려받아(풀)
+   더 최신인 쪽을 따른다(마지막 저장 우선). 접속 토큰은 이 기기의 브라우저에만
+   저장되며, 동기화되는 데이터에는 절대 포함되지 않는다. */
+const SYNC_CONFIG_KEY = 'academy_sync_config_v1';
+const syncState = { status: 'off', lastSyncAt: null, lastError: '', lastRemoteUpdatedAt: null, pushTimer: null, listeners: [], applyingRemote: false };
+
+function getSyncConfig() {
+  try {
+    const cfg = JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY));
+    return cfg && cfg.token && cfg.owner && cfg.repo ? cfg : null;
+  } catch (e) { return null; }
+}
+function saveSyncConfig(cfg) {
+  if (cfg) localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(cfg));
+  else localStorage.removeItem(SYNC_CONFIG_KEY);
+}
+function notifySyncListeners() {
+  syncState.listeners.forEach(fn => { try { fn(); } catch (e) {} });
+}
+
+function b64EncodeUnicode(str) { return btoa(unescape(encodeURIComponent(str))); }
+function b64DecodeUnicode(str) { return decodeURIComponent(escape(atob(String(str).replace(/\n/g, '')))); }
+
+async function syncApiRequest(cfg, method, bodyObj) {
+  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/data.json` + (method === 'GET' ? `?t=${Date.now()}` : '');
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: 'Bearer ' + cfg.token,
+      Accept: 'application/vnd.github+json',
+    },
+    body: bodyObj ? JSON.stringify(bodyObj) : undefined,
+  });
+  if (res.status === 404) return { notFound: true };
+  if (res.status === 401 || res.status === 403) throw new Error('토큰이 잘못되었거나 권한이 없습니다. 관리자 탭의 동기화 설정을 확인해주세요.');
+  if (!res.ok) throw new Error('동기화 서버 응답 오류 (' + res.status + ')');
+  return res.json();
+}
+
+async function syncPull(cfg) {
+  const r = await syncApiRequest(cfg, 'GET');
+  if (r.notFound) return { sha: null, envelope: null };
+  let envelope = null;
+  try { envelope = JSON.parse(b64DecodeUnicode(r.content)); } catch (e) {}
+  return { sha: r.sha, envelope };
+}
+
+async function syncPushNow() {
+  const cfg = getSyncConfig();
+  if (!cfg) return;
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+  const localData = JSON.parse(raw);
+  // 방금 원격에서 받아온 그대로면 다시 올릴 필요 없음
+  if (localData._updatedAt && localData._updatedAt === syncState.lastRemoteUpdatedAt) return;
+  // 동기화 이전부터 쓰던 데이터라 저장 시각이 없으면 지금 시각으로 찍고 올린다
+  if (!localData._updatedAt) {
+    localData._updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(localData));
+  }
+  syncState.status = 'syncing'; notifySyncListeners();
+  const current = await syncPull(cfg);
+  // 원격이 더 최신이면 덮어쓰지 않는다 (다음 풀에서 이 기기가 원격을 따라감)
+  if (current.envelope && current.envelope.updatedAt && localData._updatedAt && current.envelope.updatedAt > localData._updatedAt) {
+    syncState.status = 'ok'; notifySyncListeners();
+    return;
+  }
+  const envelope = { updatedAt: localData._updatedAt || new Date().toISOString(), data: localData };
+  await syncApiRequest(cfg, 'PUT', {
+    message: 'dashboard sync ' + envelope.updatedAt,
+    content: b64EncodeUnicode(JSON.stringify(envelope)),
+    ...(current.sha ? { sha: current.sha } : {}),
+  });
+  syncState.lastRemoteUpdatedAt = envelope.updatedAt;
+  syncState.status = 'ok';
+  syncState.lastSyncAt = new Date();
+  syncState.lastError = '';
+  notifySyncListeners();
+}
+
+function scheduleSyncPush() {
+  const cfg = getSyncConfig();
+  if (!cfg) return;
+  if (syncState.pushTimer) clearTimeout(syncState.pushTimer);
+  syncState.pushTimer = setTimeout(() => {
+    syncPushNow().catch(e => {
+      syncState.status = 'error';
+      syncState.lastError = e.message || '동기화에 실패했습니다.';
+      notifySyncListeners();
+    });
+  }, 2000);
 }
 
 function getAttendanceEntry(data, date, classId, studentId) {
@@ -1375,21 +1488,73 @@ function App() {
 
   useEffect(() => { saveData(data); }, [data]);
 
+  /* ---- 실시간 동기화 (PC ↔ 모바일) ---- */
+  const [syncTick, setSyncTick] = useState(0); // 상태 표시 갱신용
+  const [syncCfgVer, setSyncCfgVer] = useState(0); // 설정 저장/해제 시 재시작용
+  useEffect(() => {
+    const fn = () => setSyncTick(t => t + 1);
+    syncState.listeners.push(fn);
+    return () => { syncState.listeners = syncState.listeners.filter(x => x !== fn); };
+  }, []);
+
+  async function applyRemoteIfNewer() {
+    const cfg = getSyncConfig();
+    if (!cfg) return;
+    try {
+      syncState.status = 'syncing'; notifySyncListeners();
+      const r = await syncPull(cfg);
+      if (r.envelope && r.envelope.data) {
+        const remoteAt = r.envelope.updatedAt || '';
+        const localRaw = localStorage.getItem(STORAGE_KEY);
+        let localAt = '';
+        try { localAt = localRaw ? (JSON.parse(localRaw)._updatedAt || '') : ''; } catch (e) {}
+        syncState.lastRemoteUpdatedAt = remoteAt;
+        if (remoteAt && remoteAt > localAt) {
+          r.envelope.data._updatedAt = remoteAt;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(r.envelope.data));
+          syncState.applyingRemote = true;
+          setData(loadData());
+        }
+      }
+      syncState.status = 'ok'; syncState.lastSyncAt = new Date(); syncState.lastError = '';
+    } catch (e) {
+      syncState.status = 'error'; syncState.lastError = e.message || '동기화에 실패했습니다.';
+    }
+    notifySyncListeners();
+  }
+
+  useEffect(() => {
+    if (!getSyncConfig()) { syncState.status = 'off'; notifySyncListeners(); return; }
+    applyRemoteIfNewer();
+    const iv = setInterval(applyRemoteIfNewer, 30000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncCfgVer]);
+
+  const savedSyncCfg = getSyncConfig();
+  const [syncOwner, setSyncOwner] = useState(savedSyncCfg ? savedSyncCfg.owner : (window.location.hostname.endsWith('.github.io') ? window.location.hostname.split('.')[0] : ''));
+  const [syncRepo, setSyncRepo] = useState(savedSyncCfg ? savedSyncCfg.repo : 'academy-data');
+  const [syncToken, setSyncToken] = useState(savedSyncCfg ? savedSyncCfg.token : '');
+  function connectSync() {
+    if (!syncOwner.trim() || !syncRepo.trim() || !syncToken.trim()) return;
+    saveSyncConfig({ owner: syncOwner.trim(), repo: syncRepo.trim(), token: syncToken.trim() });
+    setSyncCfgVer(v => v + 1);
+    scheduleSyncPush(); // 원격이 비어있으면 현재 데이터를 첫 업로드
+  }
+  function disconnectSync() {
+    saveSyncConfig(null);
+    syncState.status = 'off'; syncState.lastError = '';
+    setSyncCfgVer(v => v + 1);
+  }
+
   useEffect(() => {
     if (data.gradePromotionYear < currentYear()) {
       setData(prev => promoteGradesInData(prev));
     }
   }, []);
 
-  useEffect(() => {
-    if (!data.autoPaymentReminderEnabled) return;
-    if (data.autoPaymentReminderLastSent === todayStr()) return;
-    if (!data.alimtalkProxyUrl) return;
-    const phones = unpaidPhoneList(data);
-    if (!phones.length) return;
-    sendPaymentReminders(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  /* 알림톡 자동발송 없음: 모든 발송은 확인 패널에서 수신자·문구를 확인한 뒤
+     수동으로만 이루어진다. */
 
   const weekday = DAYS[new Date(date + 'T00:00:00').getDay()];
 
@@ -1859,15 +2024,6 @@ function App() {
       })
       .catch(err => setReminderSendError(err.message || '발송에 실패했습니다.'))
       .finally(() => setReminderSendPending(false));
-  }
-
-  function sendPaymentReminders(manual) {
-    const phones = unpaidPhoneList(data);
-    if (!phones.length) {
-      if (manual) setReminderSendError('미납 학부모 연락처가 없습니다.');
-      return;
-    }
-    sendPaymentRemindersTo(phones);
   }
 
   /* ---- 알림톡 발송 전 확인 단계 ----
@@ -3123,10 +3279,9 @@ function App() {
                 <p className="text-sm font-medium text-gray-900">수납 알림톡 발송</p>
                 <p className="text-xs text-gray-500">
                   미납 {paymentAlerts.unpaidList.length}명 · 오늘·내일 결제일 {paymentAlerts.dueToday.length + paymentAlerts.dueTomorrow.length}명
-                  {' · 자동발송(미납 대상) '}{data.autoPaymentReminderEnabled ? '켜짐' : '꺼짐'}
                   {data.autoPaymentReminderLastSent ? ` · 마지막 발송 ${data.autoPaymentReminderLastSent}` : ''}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">자동발송은 결제일이 지난 미납 학생에게만 하루 1회 나갑니다. 아래 버튼은 학생별로 확인 후 보내는 수동 발송이에요.</p>
+                <p className="text-xs text-gray-400 mt-0.5">자동발송은 없습니다 — 아래 버튼을 눌러 학생별로 확인·선택한 뒤에만 전송돼요.</p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <button onClick={openUpcomingPaymentConfirm} disabled={reminderSendPending} className="text-xs text-indigo-600 hover:underline disabled:opacity-50">
@@ -4714,14 +4869,9 @@ function App() {
                 placeholder="https://your-worker-name.your-subdomain.workers.dev"
                 className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
               />
-              <label className="flex items-center gap-2 text-xs text-gray-600 mt-3">
-                <input
-                  type="checkbox"
-                  checked={data.autoPaymentReminderEnabled}
-                  onChange={e => setData(prev => ({ ...prev, autoPaymentReminderEnabled: e.target.checked }))}
-                />
-                미납 학생 대상 알림문자 자동발송 — 결제일이 지난 미납 학생에게, 대시보드를 열 때마다 하루 1회 자동 발송 (결제일 전 안내는 수납현황 탭의 "결제 예정 안내 발송"으로 확인 후 보내세요)
-              </label>
+              <p className="text-xs text-gray-500 mt-3 bg-gray-50 rounded-lg p-2.5">
+                🔒 모든 알림톡은 자동으로 발송되지 않습니다 — 발송 버튼을 누르면 항상 확인 패널에서 받는 사람과 문구를 확인한 뒤에만 전송돼요.
+              </p>
 
               <div className="mt-3 pt-3 border-t border-dashed border-gray-200">
                 <label className="text-xs text-gray-500 mb-1 block">연동 테스트 — 본인 번호로 학습리포트 문구 1건을 발송해봅니다 (승인받은 학습리포트 템플릿 사용)</label>
@@ -4742,6 +4892,62 @@ function App() {
                 {testSendFlash && <p className="text-xs text-green-600 mt-1.5">{testSendFlash}</p>}
                 {testSendError && <p className="text-xs text-red-500 mt-1.5">{testSendError}</p>}
               </div>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium text-gray-900 mb-2">☁️ PC·모바일 실시간 동기화</p>
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-500 mb-2">
+                내 GitHub 계정의 <b>비공개(Private) 저장소</b>에 데이터를 저장해서 PC와 모바일이 같은 데이터를 쓰게 합니다.
+                저장할 때마다 자동 업로드되고, 30초마다 다른 기기의 변경 내용을 가져와요 (마지막 저장이 우선).
+              </p>
+              <ol className="text-xs text-gray-500 mb-3 list-decimal list-inside space-y-0.5 bg-gray-50 rounded-lg p-2.5">
+                <li>github.com에서 새 저장소 만들기 — 이름 예: <b>academy-data</b>, 반드시 <b>Private</b> 선택 (학생 정보 보호)</li>
+                <li>GitHub 설정 → Developer settings → Fine-grained tokens에서 토큰 만들기 — 그 저장소만 선택, 권한은 <b>Contents: Read and write</b></li>
+                <li>아래 3칸을 채우고 "연동 시작" — <b>PC와 모바일 양쪽 모두</b> 같은 값을 입력하세요</li>
+              </ol>
+              <div className="space-y-2">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">GitHub 아이디 (owner)</label>
+                  <input type="text" value={syncOwner} onChange={e => setSyncOwner(e.target.value)}
+                    placeholder="github-아이디" className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">저장소 이름 (repo)</label>
+                  <input type="text" value={syncRepo} onChange={e => setSyncRepo(e.target.value)}
+                    placeholder="academy-data" className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">액세스 토큰 (Fine-grained, Contents 읽기/쓰기)</label>
+                  <input type="password" value={syncToken} onChange={e => setSyncToken(e.target.value)}
+                    placeholder="github_pat_..." className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mt-3">
+                <button onClick={connectSync}
+                  disabled={!syncOwner.trim() || !syncRepo.trim() || !syncToken.trim()}
+                  className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white disabled:opacity-50">연동 시작</button>
+                {getSyncConfig() && (
+                  <button onClick={disconnectSync} className="px-4 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50">연동 해제</button>
+                )}
+                <span className={`text-xs px-2.5 py-1 rounded-full ${
+                  syncState.status === 'ok' ? 'bg-green-50 text-green-700' :
+                  syncState.status === 'syncing' ? 'bg-blue-50 text-blue-700' :
+                  syncState.status === 'error' ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {syncState.status === 'ok' ? '동기화 정상' : syncState.status === 'syncing' ? '동기화 중...' : syncState.status === 'error' ? '동기화 오류' : '연동 안 됨'}
+                </span>
+              </div>
+              {syncState.lastSyncAt && syncState.status !== 'off' && (
+                <p className="text-xs text-gray-400 mt-1.5">마지막 동기화: {syncState.lastSyncAt.toLocaleString('ko-KR')}</p>
+              )}
+              {syncState.status === 'error' && syncState.lastError && (
+                <p className="text-xs text-red-500 mt-1.5">{syncState.lastError}</p>
+              )}
+              <p className="text-xs text-gray-500 mt-3 bg-gray-50 rounded-lg p-2.5">
+                🔒 토큰은 <b>이 기기의 브라우저에만</b> 저장되고, 저장소에 올라가는 데이터에는 절대 포함되지 않습니다. 토큰이 유출되면 GitHub에서 해당 토큰만 삭제(Revoke)하면 돼요.
+              </p>
             </div>
           </div>
 

@@ -400,7 +400,12 @@ async function syncApiRequest(cfg, method, bodyObj) {
     },
     body: bodyObj ? JSON.stringify(bodyObj) : undefined,
   });
-  if (res.status === 404) return { notFound: true };
+  if (res.status === 404) {
+    // GET의 404는 "아직 파일이 없음"(정상)일 수 있지만, PUT의 404는
+    // 저장소를 못 찾거나 토큰에 그 저장소 접근 권한이 없는 것 → 반드시 오류로 알린다.
+    if (method === 'GET') return { notFound: true };
+    throw new Error('저장소를 찾을 수 없습니다. ① 저장소 이름 철자 ② 토큰 만들 때 Repository access에서 이 저장소를 선택했는지 확인해주세요.');
+  }
   if (res.status === 401 || res.status === 403) throw new Error('토큰이 잘못되었거나 권한이 없습니다. 관리자 탭의 동기화 설정을 확인해주세요.');
   if (!res.ok) throw new Error('동기화 서버 응답 오류 (' + res.status + ')');
   return res.json();
@@ -410,7 +415,16 @@ async function syncPull(cfg) {
   const r = await syncApiRequest(cfg, 'GET');
   if (r.notFound) return { sha: null, envelope: null };
   let envelope = null;
-  try { envelope = JSON.parse(b64DecodeUnicode(r.content)); } catch (e) {}
+  if (r.content) { try { envelope = JSON.parse(b64DecodeUnicode(r.content)); } catch (e) {} }
+  if (!envelope && r.sha) {
+    // 1MB가 넘는 파일은 GitHub이 content를 비워서 주므로 원문(raw)으로 다시 받는다
+    try {
+      const res = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/data.json?t=${Date.now()}`, {
+        headers: { Authorization: 'Bearer ' + cfg.token, Accept: 'application/vnd.github.raw+json' },
+      });
+      if (res.ok) envelope = JSON.parse(await res.text());
+    } catch (e) {}
+  }
   return { sha: r.sha, envelope };
 }
 

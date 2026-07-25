@@ -1535,11 +1535,45 @@ function App() {
   const [syncOwner, setSyncOwner] = useState(savedSyncCfg ? savedSyncCfg.owner : (window.location.hostname.endsWith('.github.io') ? window.location.hostname.split('.')[0] : ''));
   const [syncRepo, setSyncRepo] = useState(savedSyncCfg ? savedSyncCfg.repo : 'academy-data');
   const [syncToken, setSyncToken] = useState(savedSyncCfg ? savedSyncCfg.token : '');
-  function connectSync() {
+  async function connectSync() {
     if (!syncOwner.trim() || !syncRepo.trim() || !syncToken.trim()) return;
-    saveSyncConfig({ owner: syncOwner.trim(), repo: syncRepo.trim(), token: syncToken.trim() });
+    const cfg = { owner: syncOwner.trim(), repo: syncRepo.trim(), token: syncToken.trim() };
+    saveSyncConfig(cfg);
+    try {
+      syncState.status = 'syncing'; notifySyncListeners();
+      const r = await syncPull(cfg);
+      if (r.envelope && r.envelope.data) {
+        // 저장소에 이미 데이터가 있으면 어느 쪽을 쓸지 반드시 묻는다
+        // — 두 번째 기기의 예시 데이터가 진짜 데이터를 덮어쓰는 사고 방지.
+        const useRemote = confirm(
+          '저장소에 이미 저장된 데이터가 있습니다.\n\n' +
+          '[확인] 저장소의 데이터를 이 기기로 가져오기 — 두 번째 기기(휴대폰 등)를 연결할 때는 이걸 선택하세요\n' +
+          '[취소] 이 기기의 데이터를 저장소에 덮어쓰기 — 저장소 데이터가 필요 없을 때만'
+        );
+        if (useRemote) {
+          r.envelope.data._updatedAt = r.envelope.updatedAt;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(r.envelope.data));
+          syncState.lastRemoteUpdatedAt = r.envelope.updatedAt;
+          syncState.applyingRemote = true;
+          setData(loadData());
+        } else {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const local = JSON.parse(raw);
+            local._updatedAt = new Date().toISOString();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(local));
+          }
+          scheduleSyncPush();
+        }
+      } else {
+        scheduleSyncPush(); // 저장소가 비어있으면 현재 데이터를 첫 업로드
+      }
+      syncState.status = 'ok'; syncState.lastSyncAt = new Date(); syncState.lastError = '';
+    } catch (e) {
+      syncState.status = 'error'; syncState.lastError = e.message || '동기화에 실패했습니다.';
+    }
+    notifySyncListeners();
     setSyncCfgVer(v => v + 1);
-    scheduleSyncPush(); // 원격이 비어있으면 현재 데이터를 첫 업로드
   }
   function disconnectSync() {
     saveSyncConfig(null);

@@ -939,6 +939,19 @@ function getTuitionRecord(data, studentId, monthKey) {
   return { tuition: carried ? (carried.tuition || 0) : 0, status: 'unpaid', paidDate: null };
 }
 
+// monthKey까지(포함) 아직 납부되지 않은 수업료 이월 누적 내역. 매달 새로 청구되는 수업료라도
+// 지난달분을 안 냈으면 그 미납은 사라지지 않고 완납할 때까지 계속 쌓여 보여야 한다.
+function tuitionOutstanding(data, studentId, monthKey) {
+  const byMonth = data.paymentsByMonth || {};
+  const items = [];
+  Object.keys(byMonth).sort().forEach(mk => {
+    if (mk > monthKey) return;
+    const r = byMonth[mk][studentId];
+    if (r && (r.tuition || 0) > 0 && r.status !== 'paid') items.push({ monthKey: mk, tuition: r.tuition });
+  });
+  return { items, total: items.reduce((sum, it) => sum + it.tuition, 0) };
+}
+
 /* 교재비: 수업료처럼 월별 청구(bookFeesByMonth[YYYY-MM][studentId] = {fee, status, paidDate}).
    완납한 교재비는 다음 달에 다시 나타나지 않고, 미납분은 납부할 때까지
    다음 달로 이월 누적되어 "한 번에 결제" 대상으로 표시된다. */
@@ -1933,6 +1946,21 @@ function App() {
       const rec = ensureTuitionRecord(next, studentId, monthKey);
       rec.status = status;
       if (status === 'paid' && !rec.paidDate) rec.paidDate = todayStr();
+      return next;
+    });
+  }
+
+  // 이월 누적된 미납 수업료를 한 번에 완납 처리
+  function payAllTuition(studentId) {
+    const monthKey = activePaymentMonthKey();
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const byMonth = next.paymentsByMonth || {};
+      Object.keys(byMonth).forEach(mk => {
+        if (mk > monthKey) return;
+        const r = byMonth[mk][studentId];
+        if (r && (r.tuition || 0) > 0 && r.status !== 'paid') { r.status = 'paid'; r.paidDate = todayStr(); }
+      });
       return next;
     });
   }
@@ -3539,20 +3567,29 @@ function App() {
 
           {(() => {
             const paymentMonthKey = activePaymentMonthKey();
-            const isPastMonth = paymentMonthKey !== currentMonthKey();
+            const isPastMonth = paymentMonthKey < currentMonthKey();
+            const isFutureMonth = paymentMonthKey > currentMonthKey();
             const viewSummary = computePaymentSummary(data, paymentMonthKey);
-            const monthOptions = availableMonthKeys(data);
+            // 화살표로 아직 기록이 없는 미래 달까지 이동했을 수 있으므로, 드롭다운에도 그 달을 포함시켜 선택값이 어긋나지 않게 한다.
+            const monthOptions = Array.from(new Set([...availableMonthKeys(data), paymentMonthKey])).sort().reverse();
             return (
               <React.Fragment>
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <button onClick={() => setPaymentViewMonth(shiftMonth(paymentMonthKey, -1))}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50">‹</button>
                     <select value={paymentMonthKey} onChange={e => setPaymentViewMonth(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
                       {monthOptions.map(mk => (
                         <option key={mk} value={mk}>{monthKeyLabel(mk)}{mk === currentMonthKey() ? ' (이번 달)' : ''}</option>
                       ))}
                     </select>
+                    <button onClick={() => setPaymentViewMonth(shiftMonth(paymentMonthKey, 1))}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50">›</button>
                     {isPastMonth && (
                       <span className="text-[11px] px-2 py-1 rounded-full bg-gray-100 text-gray-500">지난 달 기록 보기 · 매월 수업료 납부 현황은 달마다 새로 시작됩니다</span>
+                    )}
+                    {isFutureMonth && (
+                      <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-50 text-indigo-600">아직 오지 않은 달 · 미리 결제하신 학생은 여기서 완납 처리해두면 그 달이 되어도 미납으로 뜨지 않아요</span>
                     )}
                   </div>
                   <select value={paymentSort} onChange={e => setPaymentSort(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
@@ -3577,6 +3614,7 @@ function App() {
                     const p = getTuitionRecord(data, s.id, paymentMonthKey);
                     const bfChips = bookFeeChips(data, s.id, paymentMonthKey);
                     const bfOut = bookFeeOutstanding(data, s.id, paymentMonthKey);
+                    const tOut = tuitionOutstanding(data, s.id, paymentMonthKey);
                     return (
                       <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
                         <div className="w-52">
@@ -3605,6 +3643,12 @@ function App() {
                             <p className="text-[11px] text-red-600 mt-0.5 font-medium">
                               누적 미납 교재비 {bfOut.total.toLocaleString()}원 — 한 번에 결제 필요
                               <button onClick={() => payAllBookFees(s.id)} className="ml-1.5 text-indigo-600 hover:underline font-normal">모두 완납 처리</button>
+                            </p>
+                          )}
+                          {tOut.items.length > 1 && (
+                            <p className="text-[11px] text-red-600 mt-0.5 font-medium">
+                              누적 미납 수업료 {tOut.total.toLocaleString()}원 ({tOut.items.length}개월분) — 완납할 때까지 계속 쌓여요
+                              <button onClick={() => payAllTuition(s.id)} className="ml-1.5 text-indigo-600 hover:underline font-normal">모두 완납 처리</button>
                             </p>
                           )}
                           <button onClick={() => editPaidDate(s.id)} className="text-xs text-gray-400 hover:text-indigo-600 block">

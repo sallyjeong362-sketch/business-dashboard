@@ -157,6 +157,7 @@ function defaultData() {
     ],
     lessonLogs: {},
     classHomework: {},
+    classCancellations: {},
     workLogs: [
       { id: 'w1', date: todayStr(), teacher: '김선생', category: '수업', content: '중2 내신반 3과 본문 해석 완료, 다음 시간 단어시험 예정' },
     ],
@@ -194,6 +195,7 @@ function loadData() {
       if (!parsed.counseling) parsed.counseling = [];
       if (!parsed.lessonLogs) parsed.lessonLogs = {};
       if (!parsed.classHomework) parsed.classHomework = {};
+      if (!parsed.classCancellations) parsed.classCancellations = {};
       if (!parsed.workLogs) parsed.workLogs = [];
       if (!parsed.vocabTests) parsed.vocabTests = [];
       parsed.vocabTests.forEach(v => {
@@ -540,6 +542,34 @@ function getLessonLog(data, date, classId) {
 
 function getClassHomework(data, date, classId) {
   return data.classHomework?.[date]?.[classId] || '';
+}
+
+function getClassCancellation(data, date, classId) {
+  return data.classCancellations?.[date]?.[classId] || null;
+}
+
+function mdLabel(dateStr) {
+  if (!dateStr) return '';
+  const [, m, dd] = dateStr.split('-');
+  return `${parseInt(m, 10)}월 ${parseInt(dd, 10)}일`;
+}
+
+// 결강되어 보강이 아직 필요한(완료되지 않은) 수업 목록을 날짜순으로 모은다.
+// 결강 기록은 날짜별로 흩어져 있어 오늘 시간표만 봐서는 놓치기 쉬우므로,
+// 시간표 탭 상단에 따로 모아 보여줘 보강이 잊히지 않게 트래킹한다.
+function pendingMakeups(data) {
+  const classById = {};
+  data.classes.forEach(c => { classById[c.id] = c; });
+  const list = [];
+  Object.keys(data.classCancellations || {}).forEach(d => {
+    Object.keys(data.classCancellations[d]).forEach(classId => {
+      const entry = data.classCancellations[d][classId];
+      if (entry.makeupNeeded && !entry.makeupDone) {
+        list.push({ date: d, classId, className: classById[classId]?.name || '(삭제된 반)', ...entry });
+      }
+    });
+  });
+  return list.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 // 출결 탭에서 반별로 기록한 "오늘 수업 내용(진도)"과 "오늘 내준 숙제"를 모아, 업무일지 탭에
@@ -1687,6 +1717,20 @@ function App() {
       if (!next.classHomework[date]) next.classHomework[date] = {};
       if (content) next.classHomework[date][classId] = content;
       else delete next.classHomework[date][classId];
+      return next;
+    });
+  }
+
+  // patch.cancelled === false면 그 반의 결강 기록 자체를 지운다(사유·보강 일정 초기화).
+  function setClassCancellation(classId, patch) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.classCancellations[date]) next.classCancellations[date] = {};
+      const cur = next.classCancellations[date][classId] ||
+        { cancelled: false, reason: '', makeupNeeded: false, makeupDate: '', makeupTime: '', makeupDone: false };
+      const merged = { ...cur, ...patch };
+      if (!merged.cancelled) delete next.classCancellations[date][classId];
+      else next.classCancellations[date][classId] = merged;
       return next;
     });
   }
@@ -3186,23 +3230,100 @@ function App() {
 
       {tab === 'schedule' && (
         <div className="space-y-2">
+          {(() => {
+            const makeups = pendingMakeups(data);
+            return makeups.length > 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-2">
+                <p className="text-sm font-medium text-yellow-800 mb-2">⚠ 보강 필요 {makeups.length}건</p>
+                <div className="space-y-1.5">
+                  {makeups.map(m => (
+                    <div key={m.date + '_' + m.classId} className="flex items-center justify-between text-xs bg-white rounded-lg px-3 py-2 border border-yellow-100 flex-wrap gap-1">
+                      <span>
+                        {mdLabel(m.date)} 결강 · {m.className}
+                        {m.makeupDate ? ` → 보강 ${mdLabel(m.makeupDate)}${m.makeupTime ? ' ' + m.makeupTime : ''}` : ' (보강 일정 미정)'}
+                      </span>
+                      <button onClick={() => setDate(m.date)} className="text-indigo-600 hover:underline">해당 날짜로 이동</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           {todayClasses.length === 0 && <EmptyState text="오늘 예정된 수업이 없습니다." />}
           {todayClasses.map(c => {
             const activeStudents = c.students.filter(s => isActiveStudent(s, date));
             const checked = activeStudents.filter(s => getAttendanceEntry(data, date, c.id, s.id)?.status).length;
+            const cancellation = getClassCancellation(data, date, c.id);
             return (
-              <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer"
-                   onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
-                <div className="flex items-center gap-4">
-                  <div className="text-sm font-semibold text-indigo-700 whitespace-nowrap">{formatClassTimeForDay(c, weekday)}</div>
-                  <div>
-                    <p className="font-medium text-gray-900">{c.name}</p>
-                    <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {activeStudents.length}명</p>
+              <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-4 cursor-pointer" onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
+                    <div className="text-sm font-semibold text-indigo-700 whitespace-nowrap">{formatClassTimeForDay(c, weekday)}</div>
+                    <div>
+                      <p className="font-medium text-gray-900">{c.name}</p>
+                      <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {activeStudents.length}명</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-1 rounded-full ${checked===activeStudents.length && activeStudents.length>0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      출결 {checked}/{activeStudents.length}
+                    </span>
+                    <button
+                      onClick={() => setClassCancellation(c.id, cancellation
+                        ? { cancelled: false }
+                        : { cancelled: true, reason: '', makeupNeeded: false, makeupDate: '', makeupTime: '', makeupDone: false })}
+                      className={`text-xs px-2.5 py-1 rounded-full border ${cancellation ? 'bg-red-100 text-red-700 border-red-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                      결강
+                    </button>
                   </div>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${checked===activeStudents.length && activeStudents.length>0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                  출결 {checked}/{activeStudents.length}
-                </span>
+                {cancellation && (
+                  <div className="mt-3 pt-3 border-t border-dashed border-gray-200 space-y-2">
+                    <input
+                      type="text"
+                      value={cancellation.reason || ''}
+                      onChange={e => setClassCancellation(c.id, { reason: e.target.value })}
+                      placeholder="결강 사유 (선택, 예: 강사 개인사정)"
+                      className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => setClassCancellation(c.id, cancellation.makeupNeeded
+                          ? { makeupNeeded: false, makeupDate: '', makeupTime: '', makeupDone: false }
+                          : { makeupNeeded: true })}
+                        className={`text-xs px-2.5 py-1 rounded-full border ${cancellation.makeupNeeded ? 'bg-yellow-50 text-yellow-700 border-yellow-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                        보강 필요
+                      </button>
+                      {cancellation.makeupNeeded && (
+                        <React.Fragment>
+                          <label className="flex items-center gap-1 text-xs text-gray-500">
+                            보강 일자
+                            <input
+                              type="date"
+                              value={cancellation.makeupDate || ''}
+                              onChange={e => setClassCancellation(c.id, { makeupDate: e.target.value })}
+                              className="border border-gray-300 rounded-lg px-2 py-1 text-xs"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1 text-xs text-gray-500">
+                            보강 시간
+                            <input
+                              type="time"
+                              value={cancellation.makeupTime || ''}
+                              onChange={e => setClassCancellation(c.id, { makeupTime: e.target.value })}
+                              className="border border-gray-300 rounded-lg px-2 py-1 text-xs"
+                            />
+                          </label>
+                          <button
+                            onClick={() => setClassCancellation(c.id, { makeupDone: !cancellation.makeupDone })}
+                            className={`text-xs px-2.5 py-1 rounded-full border ${cancellation.makeupDone ? 'bg-green-100 text-green-700 border-green-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                            보강 완료
+                          </button>
+                        </React.Fragment>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

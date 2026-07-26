@@ -2482,7 +2482,7 @@ function App() {
     const vDate = prompt('날짜 (YYYY-MM-DD)', todayStr()) || todayStr();
     const resultInput = prompt('결과 (pass / fail)', 'pass') || 'pass';
     const result = resultInput.trim().toLowerCase() === 'fail' ? 'fail' : 'pass';
-    const wrongCount = parseInt(prompt('틀린 개수', '0'), 10) || 0;
+    const wrongCount = parseFloat(prompt('틀린 개수 (0.5 단위 가능)', '0')) || 0;
     const retest = parseRetestPrompt(null);
     const comment = prompt('코멘트 (선택)') || '';
     setData(prev => ({
@@ -2501,8 +2501,8 @@ function App() {
     const vDate = prompt('날짜 (YYYY-MM-DD)', v.date) ?? v.date;
     const resultInput = prompt('결과 (pass / fail)', v.result) ?? v.result;
     const result = resultInput.trim().toLowerCase() === 'fail' ? 'fail' : 'pass';
-    const wrongCountStr = prompt('틀린 개수', String(v.wrongCount));
-    const wrongCount = wrongCountStr === null ? v.wrongCount : (parseInt(wrongCountStr, 10) || 0);
+    const wrongCountStr = prompt('틀린 개수 (0.5 단위 가능)', String(v.wrongCount));
+    const wrongCount = wrongCountStr === null ? v.wrongCount : (parseFloat(wrongCountStr) || 0);
     const retest = parseRetestPrompt(v.retest);
     const comment = prompt('코멘트', v.comment) ?? v.comment;
     setData(prev => ({
@@ -4145,14 +4145,19 @@ function App() {
                                 </div>
                               </div>
                               {(v.result === 'pass' || v.result === 'fail') && (
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={v.wrongCount}
-                                  onChange={e => setVocabTest(s.id, testType, { wrongCount: parseInt(e.target.value, 10) || 0 })}
-                                  placeholder="틀린 개수"
-                                  className="w-28 border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs"
-                                />
+                                <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                                  틀린 개수
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={v.wrongCount}
+                                    onChange={e => setVocabTest(s.id, testType, { wrongCount: parseFloat(e.target.value) || 0 })}
+                                    placeholder="0.5 단위 가능"
+                                    className="w-24 border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs"
+                                  />
+                                  개
+                                </label>
                               )}
                               {v.result === 'fail' && (
                                 <div className="flex gap-1.5 flex-wrap">

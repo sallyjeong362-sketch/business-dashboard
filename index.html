@@ -1009,6 +1009,9 @@ function ensureBookFeeMonthRecord(next, studentId, monthKey) {
 // due. Only the current month gets this leniency; a still-unpaid record from a past month is
 // unambiguously overdue.
 function isBeforeDueDateThisMonth(student, monthKey) {
+  // 아직 오지 않은 달(다음 달, 그다음 달...)은 결제일 자체가 아직 도래할 수 없으므로
+  // 학생마다 결제일이 설정되어 있는지와 무관하게 항상 "결제 예정"으로 본다.
+  if (monthKey > currentMonthKey()) return true;
   if (monthKey !== currentMonthKey() || !student.paymentDueDay) return false;
   const todayDay = parseInt(todayStr().split('-')[2], 10);
   return todayDay < student.paymentDueDay;

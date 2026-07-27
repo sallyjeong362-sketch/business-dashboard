@@ -491,6 +491,45 @@ function normalizeHomework(entry) {
   return null;
 }
 
+// 그 학생의 실제 출결 기록(수업이 있었던 날)만 날짜순으로 모아, 가장 최근 기록부터
+// 거슬러 올라가며 statusKey(결석/지각)가 몇 번 연속으로 이어지는지 센다.
+// 출석·조퇴 등 다른 상태가 한 번이라도 나오면 그 지점에서 연속이 끊긴다.
+function attendanceStreak(data, classId, studentId, statusKey) {
+  const dates = Object.keys(data.attendance || {})
+    .filter(d => data.attendance[d]?.[classId]?.[studentId]?.status)
+    .sort();
+  let streak = 0;
+  for (let i = dates.length - 1; i >= 0; i--) {
+    if (data.attendance[dates[i]][classId][studentId].status === statusKey) streak++;
+    else break;
+  }
+  return streak;
+}
+
+// 결석 2연속=주의, 3연속 이상=경고 / 지각도 동일 기준. 마지막 출결 기록의 상태 하나만
+// 연속으로 이어질 수 있으므로 결석·지각 배지가 동시에 뜨는 일은 없다.
+function attendanceStreakBadge(data, classId, studentId) {
+  const absentStreak = attendanceStreak(data, classId, studentId, 'absent');
+  if (absentStreak >= 3) return { label: `결석 ${absentStreak}회 연속 · 경고`, color: 'bg-red-100 text-red-700 border-red-300' };
+  if (absentStreak >= 2) return { label: `결석 ${absentStreak}회 연속 · 주의`, color: 'bg-yellow-100 text-yellow-700 border-yellow-300' };
+  const lateStreak = attendanceStreak(data, classId, studentId, 'late');
+  if (lateStreak >= 3) return { label: `지각 ${lateStreak}회 연속 · 경고`, color: 'bg-red-100 text-red-700 border-red-300' };
+  if (lateStreak >= 2) return { label: `지각 ${lateStreak}회 연속 · 주의`, color: 'bg-yellow-100 text-yellow-700 border-yellow-300' };
+  return null;
+}
+
+// 같은 이름의 학생이 여러 반에 속해 있으면(entries) 그중 가장 심각한 배지를 대표로 보여준다.
+function worstAttendanceStreakBadge(data, entries) {
+  let best = null, bestScore = -1;
+  (entries || []).forEach(e => {
+    const b = attendanceStreakBadge(data, e.classId, e.id);
+    if (!b) return;
+    const score = (b.label.includes('경고') ? 100 : 10) + parseInt(b.label.match(/\d+/)[0], 10);
+    if (score > bestScore) { bestScore = score; best = b; }
+  });
+  return best;
+}
+
 const HW_META = {
   done: { label: '완료', cls: 'bg-green-100 text-green-700' },
   missing: { label: '미완', cls: 'bg-red-100 text-red-700' },
@@ -3229,6 +3268,11 @@ function App() {
                       {s.withdrawDate && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 align-middle">퇴소 {s.withdrawDate}</span>
                       )}
+                      {!s.withdrawDate && worstAttendanceStreakBadge(data, g.entries) && (
+                        <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full border align-middle font-medium ${worstAttendanceStreakBadge(data, g.entries).color}`}>
+                          {worstAttendanceStreakBadge(data, g.entries).label}
+                        </span>
+                      )}
                       <p className="text-xs text-gray-500 mt-0.5">
                         {[s.grade, s.school, s.parentPhone].filter(Boolean).join(' · ')}
                       </p>
@@ -3404,9 +3448,17 @@ function App() {
                   {data.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
                     const entry = getAttendanceEntry(data, date, selectedClassId, s.id) || { status: null };
                     const hwStatus = normalizeHomework(entry);
+                    const streakBadge = attendanceStreakBadge(data, selectedClassId, s.id);
                     return (
                       <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
-                        <span className="text-sm font-medium text-gray-800 w-20">{s.name}</span>
+                        <div className="min-w-20">
+                          <span className="text-sm font-medium text-gray-800 block">{s.name}</span>
+                          {streakBadge && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full border inline-block mt-0.5 whitespace-nowrap font-medium ${streakBadge.color}`}>
+                              {streakBadge.label}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex gap-1.5 flex-wrap">
                           {Object.entries(STATUS).map(([key, val]) => (
                             <button key={key}

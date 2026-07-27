@@ -851,6 +851,8 @@ function buildMonthlyReportInfo(data, student, monthKey) {
     .slice(-6)
     .map(sc => ({ d: sc.date, l: sc.label, s: sc.score }));
   const monthLabel = `${y}년 ${mo}월`;
+  const streakBadge = attendanceStreakBadge(data, student.classId, student.id);
+  const attendanceAlert = streakBadge ? streakBadge.label : '';
   const payload = {
     v: 1,
     a: data.academyName,
@@ -862,8 +864,9 @@ function buildMonthlyReportInfo(data, student, monthKey) {
     hr: homeworkRate,
     ts: testResults,
     sc: scores,
+    al: attendanceAlert,
   };
-  return { payload, monthLabel, attendanceRate, homeworkRate, testResults, counts, scores };
+  return { payload, monthLabel, attendanceRate, homeworkRate, testResults, counts, scores, attendanceAlert };
 }
 
 function encodeSharedReport(payload) {
@@ -2394,7 +2397,7 @@ function App() {
     sendAlimtalk(data.alimtalkProxyUrl, s.parentPhone, 'monthly_report', {
       studentName: s.name, academyName: data.academyName, month: info.monthLabel,
       className: s.className, attendanceRate: info.attendanceRate, homeworkRate: info.homeworkRate,
-      testResults: info.testResults, reportUrl,
+      attendanceAlert: info.attendanceAlert || '없음', testResults: info.testResults, reportUrl,
     })
       .then(() => {
         setData(prev => {
@@ -2419,7 +2422,7 @@ function App() {
     const info = buildMonthlyReportInfo(data, s, monthlyReportMonth);
     const preview =
       `Monthly Report\n안녕하세요? ${s.name} 학부모님.\n${data.academyName}에서 ${info.monthLabel} 월간 학습리포트를 보내드립니다.\n\n` +
-      `■ 반: ${s.className}\n■ 출석률: ${info.attendanceRate}\n■ 숙제 제출률: ${info.homeworkRate}\n■ 단어/문법시험: ${info.testResults}\n\n` +
+      `■ 반: ${s.className}\n■ 출석률: ${info.attendanceRate}\n■ 숙제 제출률: ${info.homeworkRate}\n■ 출결 특이사항: ${info.attendanceAlert || '없음'}\n■ 단어/문법시험: ${info.testResults}\n\n` +
       `아래 버튼을 누르면 상세 리포트를 확인할 수 있습니다.\n궁금하신 점은 학원으로 문의해 주세요.\n\n[상세 리포트 보기] ← 열람 전용 링크 버튼`;
     setAlimtalkConfirm({
       title: `${s.name} 먼슬리 리포트 (${info.monthLabel})`,
@@ -2465,6 +2468,7 @@ function App() {
       `■ 기간: ${reportData.startDate} ~ ${reportData.endDate}\n` +
       `■ 출석률: ${reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음'}\n` +
       `■ 숙제 제출률: ${reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음'}\n` +
+      `■ 출결 특이사항: ${reportData.attendanceAlert || '없음'}\n` +
       `■ 단어/문법시험: ${buildPeriodTestSummary(data, reportData.student.id, reportData.startDate, reportData.endDate)}\n` +
       `■ 최근 시험 점수: ${reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음'}\n` +
       `■ 강사 코멘트: ${comment || '-'}\n\n` +
@@ -2940,7 +2944,9 @@ function App() {
       .slice(0, 10);
     vocabTestHistory.forEach(g => g.tests.sort((a,b) => VOCAB_TEST_TYPES.indexOf(a.testType) - VOCAB_TEST_TYPES.indexOf(b.testType)));
 
-    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal, attendanceDetails, homeworkHistory, vocabTestHistory, statusCounts, hwCounts, startDate: start, endDate: end };
+    const streakBadge = attendanceStreakBadge(data, student.classId, student.id);
+    const attendanceAlert = streakBadge ? streakBadge.label : '';
+    return { student, attendanceRate, homeworkRate, scores, attCount, hwTotal, attendanceDetails, homeworkHistory, vocabTestHistory, statusCounts, hwCounts, startDate: start, endDate: end, attendanceAlert };
   }, [reportStudentId, data, reportStartDate, reportEndDate]);
 
   const groupedVocabTests = useMemo(() => {
@@ -3008,6 +3014,7 @@ function App() {
       rangeEnd: reportData.endDate,
       attendanceRate: reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음',
       homeworkRate: reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음',
+      attendanceAlert: reportData.attendanceAlert || '없음',
       testResults: buildPeriodTestSummary(data, reportData.student.id, reportData.startDate, reportData.endDate),
       recentScore: reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음',
       comment: comment || '-',
@@ -4188,6 +4195,12 @@ function App() {
                 <MetricBox label="숙제 제출률" value={reportData.homeworkRate!==null ? reportData.homeworkRate+'%' : '기록없음'} />
                 <MetricBox label="최근 점수" value={reportData.scores[0] ? reportData.scores[0].score+'점' : '기록없음'} />
               </div>
+
+              {reportData.attendanceAlert && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-xl p-3">
+                  <p className="text-sm text-red-700 font-medium">⚠ {reportData.attendanceAlert} — 학습리포트 발송 시 이 내용도 함께 전달됩니다.</p>
+                </div>
+              )}
 
               {reportData.attendanceDetails.length > 0 && (
                 <div className="mb-4">
@@ -5820,6 +5833,12 @@ function SharedReportView({ r }) {
             <span key={key} className={`text-xs px-2.5 py-1 rounded-full ${cls}`}>{label} {(r.at && r.at[key]) || 0}회</span>
           ))}
         </div>
+
+        {r.al && (
+          <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3">
+            <p className="text-sm text-red-700 font-medium">⚠ {r.al}</p>
+          </div>
+        )}
 
         <p className="text-xs font-semibold text-gray-500 mb-1.5">단어/문법시험</p>
         <p className="text-sm text-gray-700 bg-gray-50 rounded-lg p-3 mb-4">{r.ts || '시험 없음'}</p>

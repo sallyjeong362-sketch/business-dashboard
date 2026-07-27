@@ -91,6 +91,7 @@ ${v.academyName}에서 ${v.studentName} 학생의 주간 학습리포트를 보�
 ■ 기간: ${v.rangeStart} ~ ${v.rangeEnd}
 ■ 출석률: ${v.attendanceRate}
 ■ 숙제 제출률: ${v.homeworkRate}
+■ 출결 특이사항: ${v.attendanceAlert || "없음"}
 ■ 단어/문법시험: ${v.testResults || "시험 없음"}
 ■ 최근 시험 점수: ${v.recentScore}
 ■ 강사 코멘트: ${v.comment || "-"}
@@ -110,6 +111,7 @@ ${v.academyName}에서 ${v.month} 월간 학습리포트를 보내드립니다.
 ■ 반: ${v.className}
 ■ 출석률: ${v.attendanceRate}
 ■ 숙제 제출률: ${v.homeworkRate}
+■ 출결 특이사항: ${v.attendanceAlert || "없음"}
 ■ 단어/문법시험: ${v.testResults || "시험 없음"}
 
 아래 버튼을 누르면 상세 리포트를 확인할 수 있습니다.

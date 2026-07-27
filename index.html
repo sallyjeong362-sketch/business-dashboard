@@ -178,6 +178,7 @@ function defaultData() {
     expensesByMonth: {},
     studentSnapshots: {},
     teacherSalaries: {},
+    monthlyGoals: {},
   };
 }
 
@@ -259,6 +260,7 @@ function loadData() {
       if (!parsed.expensesByMonth) parsed.expensesByMonth = {};
       if (!parsed.studentSnapshots) parsed.studentSnapshots = {};
       if (!parsed.teacherSalaries) parsed.teacherSalaries = {};
+      if (!parsed.monthlyGoals) parsed.monthlyGoals = {};
       // Migrate single 주교재/부교재 string fields into the textbooks list (multiple
       // books per class, each with a category like 주교재/어휘/문법/독해).
       (parsed.classes || []).forEach(c => {
@@ -1109,6 +1111,18 @@ function getExpenses(data, monthKey) {
   return { labor: e.labor || 0, rent: e.rent || 0, other: e.other || 0 };
 }
 
+// 이달의 목표 (재원생·매출액 숫자 목표 + 커스텀 목표 + 고객에게 듣고 싶은 말) — 계속 눈에
+// 보이게 게시해두고 확언하기 위한 용도라, 계산에는 쓰이지 않는다.
+function getMonthlyGoals(data, monthKey) {
+  const g = (data.monthlyGoals || {})[monthKey];
+  return {
+    targetStudents: g?.targetStudents ?? '',
+    targetRevenue: g?.targetRevenue ?? '',
+    customGoals: g?.customGoals || [],
+    customerLanguage: g?.customerLanguage ?? '',
+  };
+}
+
 function monthAttendanceRate(data, monthKey) {
   let total = 0, attended = 0;
   Object.keys(data.attendance).forEach(d => {
@@ -1412,6 +1426,44 @@ function App() {
       if (!next.expensesByMonth) next.expensesByMonth = {};
       if (!next.expensesByMonth[monthKey]) next.expensesByMonth[monthKey] = { labor: 0, rent: 0, other: 0 };
       next.expensesByMonth[monthKey][key] = value === '' ? 0 : Math.max(0, parseInt(value, 10) || 0);
+      return next;
+    });
+  }
+
+  const DEFAULT_MONTHLY_GOALS = { targetStudents: '', targetRevenue: '', customGoals: [], customerLanguage: '' };
+  function setMonthlyGoals(monthKey, patch) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.monthlyGoals) next.monthlyGoals = {};
+      const cur = next.monthlyGoals[monthKey] || { ...DEFAULT_MONTHLY_GOALS };
+      next.monthlyGoals[monthKey] = { ...cur, ...patch };
+      return next;
+    });
+  }
+  function addCustomGoal(monthKey) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.monthlyGoals) next.monthlyGoals = {};
+      if (!next.monthlyGoals[monthKey]) next.monthlyGoals[monthKey] = { ...DEFAULT_MONTHLY_GOALS };
+      if (!next.monthlyGoals[monthKey].customGoals) next.monthlyGoals[monthKey].customGoals = [];
+      next.monthlyGoals[monthKey].customGoals.push({ id: 'g' + Date.now() + Math.floor(Math.random() * 1000), label: '', target: '' });
+      return next;
+    });
+  }
+  function updateCustomGoal(monthKey, id, patch) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const g = next.monthlyGoals?.[monthKey]?.customGoals?.find(x => x.id === id);
+      if (g) Object.assign(g, patch);
+      return next;
+    });
+  }
+  function removeCustomGoal(monthKey, id) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (next.monthlyGoals?.[monthKey]) {
+        next.monthlyGoals[monthKey].customGoals = (next.monthlyGoals[monthKey].customGoals || []).filter(x => x.id !== id);
+      }
       return next;
     });
   }
@@ -4600,6 +4652,63 @@ function App() {
               </select>
               <p className="text-xs text-gray-400">매출·학생·출결·상담 지표는 다른 탭의 기록에서 자동 계산됩니다</p>
             </div>
+
+            {(() => {
+              const goals = getMonthlyGoals(data, metricsMonth);
+              return (
+                <div className="bg-gradient-to-br from-indigo-50 to-white border border-indigo-200 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-gray-700 mb-3">🎯 이달의 목표 ({monthKeyLabel(metricsMonth)})</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <div className="bg-white rounded-lg p-3 border border-gray-100">
+                      <label className="text-xs text-gray-500 mb-1 block">재원생 목표</label>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input type="number" min="0" value={goals.targetStudents}
+                          onChange={e => setMonthlyGoals(metricsMonth, { targetStudents: e.target.value })}
+                          placeholder="예: 30" className="w-24 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm" />
+                        <span className="text-sm text-gray-500">명</span>
+                        {goals.targetStudents !== '' && (
+                          <span className="text-xs text-gray-400 ml-auto">현재 {m.currentCount !== null ? m.currentCount : 0}명</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-gray-100">
+                      <label className="text-xs text-gray-500 mb-1 block">매출액 목표</label>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input type="number" min="0" value={goals.targetRevenue}
+                          onChange={e => setMonthlyGoals(metricsMonth, { targetRevenue: e.target.value })}
+                          placeholder="예: 5000000" className="w-32 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm" />
+                        <span className="text-sm text-gray-500">원</span>
+                        {goals.targetRevenue !== '' && (
+                          <span className="text-xs text-gray-400 ml-auto">현재 {fmtWon(m.revenue)}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 mb-3">
+                    {goals.customGoals.map(g => (
+                      <div key={g.id} className="flex items-center gap-2">
+                        <input type="text" value={g.label}
+                          onChange={e => updateCustomGoal(metricsMonth, g.id, { label: e.target.value })}
+                          placeholder="목표 항목 (예: 학부모 만족도)" className="flex-1 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm" />
+                        <input type="text" value={g.target}
+                          onChange={e => updateCustomGoal(metricsMonth, g.id, { target: e.target.value })}
+                          placeholder="목표 값" className="w-32 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm" />
+                        <button onClick={() => removeCustomGoal(metricsMonth, g.id)} className="text-xs text-gray-400 hover:text-red-500">삭제</button>
+                      </div>
+                    ))}
+                    <button onClick={() => addCustomGoal(metricsMonth)} className="text-xs text-indigo-600 hover:underline">+ 목표 항목 추가</button>
+                  </div>
+
+                  <label className="text-xs text-gray-500 mb-1 block">고객에게 듣고 싶은 말 (확언)</label>
+                  <textarea value={goals.customerLanguage}
+                    onChange={e => setMonthlyGoals(metricsMonth, { customerLanguage: e.target.value })}
+                    placeholder="예: 선생님 덕분에 아이가 영어를 진짜 좋아하게 됐어요"
+                    rows={3}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                </div>
+              );
+            })()}
 
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <p className="text-sm font-semibold text-gray-700 mb-3">💰 매출</p>

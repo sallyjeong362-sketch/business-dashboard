@@ -1731,12 +1731,33 @@ function App() {
       const next = JSON.parse(JSON.stringify(prev));
       let v = next.vocabTests.find(x => x.studentId === studentId && x.date === date && x.testType === testType);
       if (!v) {
-        v = { id: 'vt' + Date.now() + Math.floor(Math.random() * 1000), studentId, testType, date, result: null, wrongCount: 0, retest: null, comment: '' };
+        v = { id: 'vt' + Date.now() + Math.floor(Math.random() * 1000), studentId, testType, date, result: null, wrongCount: 0, retest: null, comment: '', photo: null };
         next.vocabTests.push(v);
       }
       Object.assign(v, patch);
       return next;
     });
+  }
+
+  function updateVocabTestById(id, patch) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      const v = next.vocabTests.find(x => x.id === id);
+      if (v) Object.assign(v, patch);
+      return next;
+    });
+  }
+
+  // 채점지 사진 리사이즈는 비동기라, 처리 중인 항목(key = studentId_testType 또는 vocabTest id)만
+  // 버튼을 비활성화하기 위한 상태
+  const [vocabPhotoUploading, setVocabPhotoUploading] = useState({});
+  function handleVocabPhotoUpload(key, file, applyPatch) {
+    if (!file) return;
+    setVocabPhotoUploading(prev => ({ ...prev, [key]: true }));
+    resizeImageForUpload(file)
+      .then(dataUrl => applyPatch({ photo: dataUrl }))
+      .catch(() => alert('사진을 처리하지 못했습니다. 다시 시도해주세요.'))
+      .finally(() => setVocabPhotoUploading(prev => ({ ...prev, [key]: false })));
   }
 
   useEffect(() => {
@@ -4406,6 +4427,14 @@ function App() {
                                   </button>
                                 </div>
                               )}
+                              {testType === '문법 복습시험' && (v.result === 'pass' || v.result === 'fail') && (
+                                <GradedPaperPhoto
+                                  photo={v.photo}
+                                  uploading={!!vocabPhotoUploading[s.id + '_' + testType]}
+                                  onUpload={file => handleVocabPhotoUpload(s.id + '_' + testType, file, patch => setVocabTest(s.id, testType, patch))}
+                                  onRemove={() => setVocabTest(s.id, testType, { photo: null })}
+                                />
+                              )}
                               <input
                                 type="text"
                                 value={v.comment || ''}
@@ -4470,6 +4499,16 @@ function App() {
                       <p className="text-sm text-gray-600 mt-1">
                         {v.result === 'absent' ? '결석으로 시험을 보지 못했습니다' : `틀린 개수: ${v.wrongCount}개`}{v.comment ? ` · ${v.comment}` : ''}
                       </p>
+                      {v.testType === '문법 복습시험' && v.result !== 'absent' && (
+                        <div className="mt-1.5">
+                          <GradedPaperPhoto
+                            photo={v.photo}
+                            uploading={!!vocabPhotoUploading[v.id]}
+                            onUpload={file => handleVocabPhotoUpload(v.id, file, patch => updateVocabTestById(v.id, patch))}
+                            onRemove={() => updateVocabTestById(v.id, { photo: null })}
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -5385,6 +5424,56 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// 채점지 사진을 그대로 저장하면 용량이 커서(수 MB) 동기화가 느려지므로, 캔버스로
+// 가로 1000px·JPEG 70%로 줄여서 저장한다. 캔버스를 못 쓰는 환경이면 원본을 그대로 쓴다.
+function resizeImageForUpload(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('이미지를 읽을 수 없습니다.'));
+    reader.onload = () => {
+      const rawDataUrl = reader.result;
+      const img = new Image();
+      img.onerror = () => resolve(rawDataUrl);
+      img.onload = () => {
+        try {
+          const maxW = 1000;
+          const scale = img.width > maxW ? maxW / img.width : 1;
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale) || img.width || 1;
+          canvas.height = Math.round(img.height * scale) || img.height || 1;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { resolve(rawDataUrl); return; }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        } catch (e) { resolve(rawDataUrl); }
+      };
+      img.src = rawDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// 문법시험 채점지 사진 첨부 UI (레코드당 최근 1장만 유지, 다시 찍으면 덮어씀)
+function GradedPaperPhoto({ photo, uploading, onUpload, onRemove }) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <label className="text-xs px-2.5 py-1 rounded-full border border-gray-300 text-gray-600 hover:bg-gray-50 cursor-pointer">
+        {uploading ? '처리 중...' : (photo ? '채점지 사진 다시 찍기' : '채점지 사진 첨부')}
+        <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploading}
+          onChange={e => { onUpload(e.target.files[0]); e.target.value = ''; }} />
+      </label>
+      {photo && (
+        <React.Fragment>
+          <a href={photo} target="_blank" rel="noreferrer">
+            <img src={photo} alt="채점지 사진" className="h-12 w-12 object-cover rounded-lg border border-gray-200" />
+          </a>
+          <button onClick={onRemove} className="text-xs text-red-500 hover:underline">사진 제거</button>
+        </React.Fragment>
       )}
     </div>
   );

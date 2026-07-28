@@ -2443,12 +2443,19 @@ function App() {
     const seen = {};
     const recips = [];
     dueSoon.forEach(p => {
-      if (p.student.parentPhone && !seen[p.student.parentPhone]) {
-        seen[p.student.parentPhone] = true;
-        recips.push({ name: p.student.name + ' 학부모', phone: p.student.parentPhone, studentName: p.student.name, retestInfo: pendingTestsSummary(p.tests) });
-      }
+      const retestInfo = pendingTestsSummary(p.tests);
+      // 학부모·학생 연락처가 각각 있으면 둘 다에게, 같은 번호면 한 번만 보낸다.
+      [
+        { role: '학부모', phone: p.student.parentPhone },
+        { role: '학생', phone: p.student.studentPhone },
+      ].forEach(({ role, phone }) => {
+        if (phone && !seen[phone]) {
+          seen[phone] = true;
+          recips.push({ name: `${p.student.name} ${role}`, phone, studentName: p.student.name, retestInfo });
+        }
+      });
     });
-    if (!recips.length) { setRetestNoticeError('오늘·내일 재시험 예정인 학생의 학부모 연락처가 없습니다.'); return; }
+    if (!recips.length) { setRetestNoticeError('오늘·내일 재시험 예정인 학생의 학부모·학생 연락처가 없습니다.'); return; }
     const init = {};
     recips.forEach(r => { init[r.phone] = true; });
     setAlimtalkChecked(init);

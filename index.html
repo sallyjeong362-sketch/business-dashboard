@@ -797,6 +797,49 @@ function classCapacityInfo(c) {
 
 /* 기간 내 단어/문법시험 결과 요약 (위클리·먼슬리 리포트 알림톡용)
    예: "단어시험 합격 2회·불합격 1회 (재시험 필요 1건) / 문법시험 합격 2회" */
+// 재시험 필요(retest === 'needed')로 남아있는(완료 처리 안 된) 항목들을 학생별로 묶는다.
+// 퇴소생은 제외. 안내 발송 대상 판단과 화면 목록 표시에 함께 쓰인다.
+function pendingRetests(data) {
+  const studentById = {};
+  allStudents(data).forEach(s => { if (isActiveStudent(s, todayStr())) studentById[s.id] = s; });
+  const map = {};
+  const order = [];
+  data.vocabTests.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(v => {
+    if (v.retest !== 'needed') return;
+    const student = studentById[v.studentId];
+    if (!student) return;
+    if (!map[v.studentId]) { map[v.studentId] = { student, tests: [] }; order.push(v.studentId); }
+    map[v.studentId].tests.push({
+      id: v.id,
+      testType: v.testType === '문법 복습시험' ? '문법시험' : v.testType,
+      date: v.date,
+      retestDate: v.retestDate || '',
+    });
+  });
+  return order.map(sid => map[sid]);
+}
+
+function pendingTestsSummary(tests) {
+  return tests.map(t => `${t.testType}(${mdLabel(t.date)}${t.retestDate ? ` → 재시험 ${mdLabel(t.retestDate)}` : ''})`).join(', ');
+}
+
+function tomorrowStr() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d - tz).toISOString().slice(0, 10);
+}
+
+// 재시험 예정일을 오늘·내일로 미뤄둔 학생만 안내 발송 대상으로 추린다 — 결제 예정 안내와
+// 같은 방식으로, 아직 날짜가 임박하지 않은 재시험까지 미리 알리지 않기 위함.
+function dueSoonRetests(data) {
+  const todayD = todayStr();
+  const tomorrowD = tomorrowStr();
+  return pendingRetests(data)
+    .map(p => ({ student: p.student, tests: p.tests.filter(t => t.retestDate === todayD || t.retestDate === tomorrowD) }))
+    .filter(p => p.tests.length > 0);
+}
+
 function buildPeriodTestSummary(data, studentId, startDate, endDate) {
   const stats = {};
   const order = [];
@@ -1407,6 +1450,9 @@ function App() {
   const [reminderSendPending, setReminderSendPending] = useState(false);
   const [reminderSendError, setReminderSendError] = useState('');
   const [reminderSendFlash, setReminderSendFlash] = useState('');
+  const [retestNoticePending, setRetestNoticePending] = useState(false);
+  const [retestNoticeError, setRetestNoticeError] = useState('');
+  const [retestNoticeFlash, setRetestNoticeFlash] = useState('');
   const [bulkGradeSelect, setBulkGradeSelect] = useState(GRADE_ORDER[0]);
   const [bulkGradeAmount, setBulkGradeAmount] = useState('');
   const [bulkGradeApplyFlash, setBulkGradeApplyFlash] = useState('');
@@ -2373,6 +2419,47 @@ function App() {
       previewText: `안녕하세요. ${data.academyName}입니다.\n${first.studentName} 학생의 수강료 결제일(${first.dueDate})이 다가와 미리 안내드립니다.\n기한 내 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
       previewNote: '미리보기는 첫 번째 학생 기준이며, 실제로는 학생마다 이름과 결제일이 각자 맞게 들어갑니다.',
       doSend: phones => sendUpcomingPaymentTo(recips.filter(r => phones.includes(r.phone))),
+    });
+  }
+
+  /* 재시험 안내: 재시험 예정일이 오늘·내일인 학생만 대상으로 하는 개인화 발송.
+     결제 예정 안내와 같은 방식으로, 날짜가 임박한 학생에게만 보낸다. */
+  function sendRetestNoticeTo(recips) {
+    if (!recips.length) { setRetestNoticeError('선택된 학부모가 없습니다.'); return; }
+    setRetestNoticePending(true);
+    setRetestNoticeError('');
+    const to = recips.map(r => ({
+      phone: r.phone,
+      variables: { academyName: data.academyName, studentName: r.studentName, retestInfo: r.retestInfo },
+    }));
+    sendAlimtalk(data.alimtalkProxyUrl, to, 'retest_notice', {})
+      .then(() => setRetestNoticeFlash(`${recips.length}명에게 재시험 안내를 발송했습니다.`))
+      .catch(err => setRetestNoticeError(err.message || '발송에 실패했습니다.'))
+      .finally(() => setRetestNoticePending(false));
+  }
+
+  function openRetestNoticeConfirm() {
+    const dueSoon = dueSoonRetests(data);
+    const seen = {};
+    const recips = [];
+    dueSoon.forEach(p => {
+      if (p.student.parentPhone && !seen[p.student.parentPhone]) {
+        seen[p.student.parentPhone] = true;
+        recips.push({ name: p.student.name + ' 학부모', phone: p.student.parentPhone, studentName: p.student.name, retestInfo: pendingTestsSummary(p.tests) });
+      }
+    });
+    if (!recips.length) { setRetestNoticeError('오늘·내일 재시험 예정인 학생의 학부모 연락처가 없습니다.'); return; }
+    const init = {};
+    recips.forEach(r => { init[r.phone] = true; });
+    setAlimtalkChecked(init);
+    const first = recips[0];
+    setAlimtalkConfirm({
+      title: '재시험 안내 (오늘·내일 예정)',
+      recipients: recips.map(r => ({ name: r.name, phone: r.phone })),
+      selectable: true,
+      previewText: `안녕하세요. ${data.academyName}입니다.\n${first.studentName} 학생의 재시험 일정을 안내드립니다.\n\n■ 재시험 예정: ${first.retestInfo}\n\n준비해서 올 수 있도록 확인 부탁드립니다.\n궁금하신 점은 학원으로 문의해 주세요.`,
+      previewNote: '미리보기는 첫 번째 학생 기준이며, 실제로는 학생마다 각자의 재시험 일정으로 발송됩니다.',
+      doSend: phones => sendRetestNoticeTo(recips.filter(r => phones.includes(r.phone))),
     });
   }
 
@@ -4466,9 +4553,9 @@ function App() {
                                 </label>
                               )}
                               {v.result === 'fail' && (
-                                <div className="flex gap-1.5 flex-wrap">
+                                <div className="flex gap-1.5 flex-wrap items-center">
                                   <button
-                                    onClick={() => setVocabTest(s.id, testType, { retest: v.retest === 'needed' ? null : 'needed' })}
+                                    onClick={() => setVocabTest(s.id, testType, v.retest === 'needed' ? { retest: null, retestDate: '' } : { retest: 'needed' })}
                                     className={`text-xs px-2.5 py-1 rounded-full border ${v.retest==='needed' ? 'bg-yellow-50 text-yellow-700 border-yellow-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
                                     재시험 필요
                                   </button>
@@ -4477,6 +4564,14 @@ function App() {
                                     className={`text-xs px-2.5 py-1 rounded-full border ${v.retest==='done' ? 'bg-green-100 text-green-700 border-green-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
                                     재시험 완료
                                   </button>
+                                  {v.retest === 'needed' && (
+                                    <label className="flex items-center gap-1 text-xs text-gray-500">
+                                      재시험 예정일
+                                      <input type="date" value={v.retestDate || ''}
+                                        onChange={e => setVocabTest(s.id, testType, { retestDate: e.target.value })}
+                                        className="border border-gray-300 rounded-lg px-2 py-1 text-xs" />
+                                    </label>
+                                  )}
                                 </div>
                               )}
                               {testType === '문법 복습시험' && (v.result === 'pass' || v.result === 'fail') && (
@@ -4507,6 +4602,47 @@ function App() {
               )}
             </React.Fragment>
           )}
+
+          {(() => {
+            const pending = pendingRetests(data);
+            const dueSoon = dueSoonRetests(data);
+            return pending.length > 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                  <p className="text-sm font-medium text-yellow-800">
+                    ⚠ 재시험 필요 {pending.length}명{dueSoon.length > 0 ? ` · 오늘·내일 예정 ${dueSoon.length}명` : ''}
+                  </p>
+                  <button onClick={openRetestNoticeConfirm} disabled={retestNoticePending || dueSoon.length === 0}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-yellow-600 text-white disabled:opacity-50">
+                    {retestNoticePending ? '발송 중...' : '재시험 안내 발송'}
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {pending.map(p => (
+                    <div key={p.student.id} className="bg-white rounded-lg p-2.5 text-xs">
+                      <p className="font-medium text-gray-800 mb-1">{p.student.name}</p>
+                      {p.tests.map(t => (
+                        <div key={t.id} className="flex items-center gap-2 flex-wrap text-gray-600 mb-1 last:mb-0">
+                          <span>{t.testType} ({mdLabel(t.date)})</span>
+                          <label className="flex items-center gap-1 text-gray-500">
+                            재시험 예정일
+                            <input type="date" value={t.retestDate}
+                              onChange={e => updateVocabTestById(t.id, { retestDate: e.target.value })}
+                              className="border border-gray-300 rounded-lg px-2 py-1 text-xs" />
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                {dueSoon.length === 0 && (
+                  <p className="text-[11px] text-yellow-700 mt-2">재시험 예정일을 오늘·내일로 입력해야 안내를 보낼 수 있어요.</p>
+                )}
+                {retestNoticeError && <p className="text-xs text-red-500 mt-2">{retestNoticeError}</p>}
+                {retestNoticeFlash && <p className="text-xs text-green-600 mt-2">{retestNoticeFlash}</p>}
+              </div>
+            );
+          })()}
 
           <p className="text-xs text-gray-500 pt-2">전체 시험 기록{vtFilterDate ? ` · ${vtFilterDate}` : ''}</p>
           <VocabTestCalendar

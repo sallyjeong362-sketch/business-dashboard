@@ -130,6 +130,18 @@ ${v.academyName}에서 ${v.month} 월간 학습리포트를 보내드립니다.
 본 안내는 수신 동의하신 재원생 학부모님께 발송됩니다.
 궁금하신 점은 학원으로 문의해 주세요.`,
   },
+  // 재시험 안내: 재시험 예정일이 오늘·내일인 학생만 대상으로 보내는 개인화 발송
+  retest_notice: {
+    tplCode: "여기에_승인템플릿코드",
+    subject: "재시험 안내",
+    build: (v) => `안녕하세요. ${v.academyName}입니다.
+${v.studentName} 학생의 재시험 일정을 안내드립니다.
+
+■ 재시험 예정: ${v.retestInfo}
+
+준비해서 올 수 있도록 확인 부탁드립니다.
+궁금하신 점은 학원으로 문의해 주세요.`,
+  },
 };
 /* ────────────────────────────── 설정 끝 ─────────────────────────────────── */
 
@@ -144,7 +156,7 @@ try {
   ["APIKEY", "USERID", "SENDERKEY", "SENDER"].forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) CONFIG[k] = String(fileCfg[k]).trim();
   });
-  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_UPCOMING: "payment_upcoming", TPL_DAILY: "daily_report", TPL_REPORT: "report", TPL_MONTHLY: "monthly_report", TPL_NOTICE: "notice" };
+  const tplMap = { TPL_PAYMENT: "payment_reminder", TPL_UPCOMING: "payment_upcoming", TPL_DAILY: "daily_report", TPL_REPORT: "report", TPL_MONTHLY: "monthly_report", TPL_NOTICE: "notice", TPL_RETEST: "retest_notice" };
   Object.keys(tplMap).forEach((k) => {
     if (fileCfg[k] && !String(fileCfg[k]).startsWith("여기에")) TEMPLATES[tplMap[k]].tplCode = String(fileCfg[k]).trim();
   });

@@ -83,6 +83,8 @@ ${v.academyName} ${v.date} 데일리 리포트입니다.
     tplCode: "여기에_승인템플릿코드",
     subject: "Weekly Report",
     // 강조표기형 템플릿: 강조 제목(emtitle)도 승인받은 값과 똑같아야 합니다.
+    // "Weekly Report 상세"(UJ_6618)로 실제 승인된 문구는 출결 특이사항·단어/문법시험
+    // 줄이 없다 — 이 두 줄이 있으면 "메시지가 템플릿과 일치하지 않음"으로 발송이 막힌다.
     emtitle: "Weekly Report",
     build: (v) => `안녕하세요? ${v.studentName} 학부모님.
 ${v.academyName}에서 ${v.studentName} 학생의 주간 학습리포트를 보내드립니다.
@@ -91,8 +93,6 @@ ${v.academyName}에서 ${v.studentName} 학생의 주간 학습리포트를 보�
 ■ 기간: ${v.rangeStart} ~ ${v.rangeEnd}
 ■ 출석률: ${v.attendanceRate}
 ■ 숙제 제출률: ${v.homeworkRate}
-■ 출결 특이사항: ${v.attendanceAlert || "없음"}
-■ 단어/문법시험: ${v.testResults || "시험 없음"}
 ■ 최근 시험 점수: ${v.recentScore}
 ■ 강사 코멘트: ${v.comment || "-"}
 

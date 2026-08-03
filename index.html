@@ -2635,8 +2635,6 @@ function App() {
       `■ 기간: ${reportData.startDate} ~ ${reportData.endDate}\n` +
       `■ 출석률: ${reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음'}\n` +
       `■ 숙제 제출률: ${reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음'}\n` +
-      `■ 출결 특이사항: ${reportData.attendanceAlert || '없음'}\n` +
-      `■ 단어/문법시험: ${buildPeriodTestSummary(data, reportData.student.id, reportData.startDate, reportData.endDate)}\n` +
       `■ 최근 시험 점수: ${reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음'}\n` +
       `■ 강사 코멘트: ${comment || '-'}\n\n` +
       `궁금하신 점은 학원으로 문의해 주세요.`;
@@ -4365,7 +4363,7 @@ function App() {
 
               {reportData.attendanceAlert && (
                 <div className="mb-4 bg-red-50 border border-red-200 rounded-xl p-3">
-                  <p className="text-sm text-red-700 font-medium">⚠ {reportData.attendanceAlert} — 학습리포트 발송 시 이 내용도 함께 전달됩니다.</p>
+                  <p className="text-sm text-red-700 font-medium">⚠ {reportData.attendanceAlert} — 먼슬리 리포트 발송 시 이 내용도 함께 전달됩니다. (위클리 알림톡 문구에는 포함되지 않고 화면에만 표시돼요)</p>
                 </div>
               )}
 

@@ -898,6 +898,10 @@ function buildMonthlyReportInfo(data, student, monthKey) {
   const monthLabel = `${y}년 ${mo}월`;
   const streakBadge = attendanceStreakBadge(data, student.classId, student.id);
   const attendanceAlert = streakBadge ? streakBadge.label : '';
+  const attendanceDetail = `출석 ${counts.present}회·지각 ${counts.late}회·조퇴 ${counts.early}회·결석 ${counts.absent}회`;
+  const scoresText = scores.length
+    ? scores.map(sc => `${parseInt(sc.d.slice(5, 7), 10)}/${parseInt(sc.d.slice(8, 10), 10)} ${sc.l} ${sc.s}점`).join(', ')
+    : '기록 없음';
   const payload = {
     v: 1,
     a: data.academyName,
@@ -911,7 +915,7 @@ function buildMonthlyReportInfo(data, student, monthKey) {
     sc: scores,
     al: attendanceAlert,
   };
-  return { payload, monthLabel, attendanceRate, homeworkRate, testResults, counts, scores, attendanceAlert };
+  return { payload, monthLabel, attendanceRate, homeworkRate, testResults, counts, scores, attendanceAlert, attendanceDetail, scoresText };
 }
 
 function encodeSharedReport(payload) {
@@ -1149,9 +1153,21 @@ const METRICS_COST_FIELDS = [
   { key: 'other', label: '기타 비용 (교재 매입·관리비 등)' },
 ];
 
+// 인건비·임대료는 매달 그대로인 경우가 많아, 그 달에 직접 입력하지 않았으면 가장 최근에
+// 입력했던 달의 값을 그대로 이어서 보여준다(수업료 이월과 같은 방식). 특정 달만 다르게
+// 바뀌었으면(급여 인상 등) 그 달에 새로 입력하면 되고, 그 이후부터는 그 값이 이어진다.
+// 기타 비용은 매달 달라지는 경우가 많아 이어받지 않고 그 달의 값만 쓴다.
+function mostRecentExpenseValue(data, beforeMonthKey, key) {
+  const byMonth = data.expensesByMonth || {};
+  const keys = Object.keys(byMonth).filter(k => k < beforeMonthKey && byMonth[k][key] !== undefined).sort().reverse();
+  return keys.length ? byMonth[keys[0]][key] : 0;
+}
+
 function getExpenses(data, monthKey) {
   const e = (data.expensesByMonth || {})[monthKey] || {};
-  return { labor: e.labor || 0, rent: e.rent || 0, other: e.other || 0 };
+  const labor = e.labor !== undefined ? e.labor : mostRecentExpenseValue(data, monthKey, 'labor');
+  const rent = e.rent !== undefined ? e.rent : mostRecentExpenseValue(data, monthKey, 'rent');
+  return { labor, rent, other: e.other || 0 };
 }
 
 // 이달의 목표 (재원생·매출액 숫자 목표 + 커스텀 목표 + 고객에게 듣고 싶은 말) — 계속 눈에
@@ -1470,7 +1486,9 @@ function App() {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       if (!next.expensesByMonth) next.expensesByMonth = {};
-      if (!next.expensesByMonth[monthKey]) next.expensesByMonth[monthKey] = { labor: 0, rent: 0, other: 0 };
+      // labor·rent는 처음부터 0으로 채우지 않는다 — 그래야 "이 달엔 직접 입력한 적 없음"과
+      // "이 달에 0으로 입력함"을 구분해서, 안 만졌으면 이전 달 값이 계속 이어질 수 있다.
+      if (!next.expensesByMonth[monthKey]) next.expensesByMonth[monthKey] = { other: 0 };
       next.expensesByMonth[monthKey][key] = value === '' ? 0 : Math.max(0, parseInt(value, 10) || 0);
       return next;
     });
@@ -2554,21 +2572,19 @@ function App() {
     });
   }
 
-  /* 먼슬리 리포트: 한 달치 요약 + 상세 리포트 열람 링크(버튼)를 알림톡으로 발송 */
+  /* 먼슬리 리포트: 버튼/링크 없이, 대시보드에 보이는 정보를 텍스트에 전부 담아 발송.
+     (링크 버튼은 알리고 웹링크가 고정 주소만 허용해 학생별 개인화가 안 되는 것으로 확인되어
+     제외 — 새 템플릿으로 등록·승인받아야 사용 가능. 승인 전까지는 발송이 실패한다.) */
   const [monthlyReportMonth, setMonthlyReportMonth] = useState(currentMonthKey());
   function sendMonthlyReport(s, info) {
     setReportSendPending(true);
     setReportSendError('');
-    const base = window.location.origin + window.location.pathname;
-    // 진단 결과: 등록된 버튼 링크와 조금이라도 다르면(짧은 값이어도) 발송이 막힌다 —
-    // 이 템플릿의 웹링크 버튼은 완전 고정형으로 승인된 것으로 확인됨. 학생별 개인화 링크는
-    // 알리고에 "가변형 URL" 등록 방법을 확인하기 전까지, 우선 고정 링크로 발송해 실제
-    // 알림톡은 정상적으로 도착하게 한다.
-    const reportUrl = base;
     sendAlimtalk(data.alimtalkProxyUrl, s.parentPhone, 'monthly_report', {
       studentName: s.name, academyName: data.academyName, month: info.monthLabel,
-      className: s.className, attendanceRate: info.attendanceRate, homeworkRate: info.homeworkRate,
-      attendanceAlert: info.attendanceAlert || '없음', testResults: info.testResults, reportUrl,
+      className: s.className, attendanceDetail: info.attendanceDetail,
+      attendanceRate: info.attendanceRate, homeworkRate: info.homeworkRate,
+      attendanceAlert: info.attendanceAlert || '없음', testResults: info.testResults,
+      scores: info.scoresText, comment: comment || '-',
     })
       .then(() => {
         setData(prev => {
@@ -2593,13 +2609,13 @@ function App() {
     const info = buildMonthlyReportInfo(data, s, monthlyReportMonth);
     const preview =
       `Monthly Report\n안녕하세요? ${s.name} 학부모님.\n${data.academyName}에서 ${info.monthLabel} 월간 학습리포트를 보내드립니다.\n\n` +
-      `■ 반: ${s.className}\n■ 출석률: ${info.attendanceRate}\n■ 숙제 제출률: ${info.homeworkRate}\n■ 출결 특이사항: ${info.attendanceAlert || '없음'}\n■ 단어/문법시험: ${info.testResults}\n\n` +
-      `아래 버튼을 누르면 상세 리포트를 확인할 수 있습니다.\n궁금하신 점은 학원으로 문의해 주세요.\n\n[상세 리포트 보기] ← 열람 전용 링크 버튼`;
+      `■ 반: ${s.className}\n■ 출석: ${info.attendanceDetail}\n■ 출석률: ${info.attendanceRate}\n■ 숙제 제출률: ${info.homeworkRate}\n■ 출결 특이사항: ${info.attendanceAlert || '없음'}\n■ 단어/문법시험: ${info.testResults}\n■ 시험 점수: ${info.scoresText}\n■ 강사 코멘트: ${comment || '-'}\n\n` +
+      `궁금하신 점은 학원으로 문의해 주세요.`;
     setAlimtalkConfirm({
       title: `${s.name} 먼슬리 리포트 (${info.monthLabel})`,
       recipients: [{ name: s.name + ' 학부모', phone: s.parentPhone }],
       previewText: preview,
-      previewNote: '⚠ 현재 버튼은 학생별 리포트가 아니라 대시보드 첫 화면으로 연결됩니다 (알리고에 등록된 웹링크 버튼이 고정 주소만 허용해서, 개인화 링크는 아직 지원되지 않아요).',
+      previewNote: '⚠ 새로 등록해야 하는 템플릿입니다 — 알리고 승인 전까지는 발송이 실패해요.',
       doSend: () => sendMonthlyReport(s, info),
     });
   }
@@ -4780,7 +4796,7 @@ function App() {
           mk,
           collected: computePaymentSummary(data, mk).totalCollected,
           students: mk === currentMonthKey()
-            ? groupStudentsByName(allStudents(data)).length
+            ? groupStudentsByName(allStudents(data).filter(s => isActiveStudent(s, todayStr()))).length
             : (data.studentSnapshots || {})[mk],
         }));
         const maxCollected = Math.max(1, ...trend.map(t => t.collected));
@@ -4915,7 +4931,7 @@ function App() {
 
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <p className="text-sm font-semibold text-gray-700 mb-1">🧾 비용 입력 ({monthKeyLabel(metricsMonth)})</p>
-              <p className="text-xs text-gray-400 mb-3">이 달에 지출한 금액을 입력하면 아래 수익성 지표가 자동 계산됩니다. (원 단위)</p>
+              <p className="text-xs text-gray-400 mb-3">이 달에 지출한 금액을 입력하면 아래 수익성 지표가 자동 계산됩니다. (원 단위) 인건비·임대료는 한 번 입력하면 다음 달에도 자동으로 이어지고, 필요하면 그 달만 다시 입력해서 바꿀 수 있어요. 기타 비용은 매달 새로 입력해야 해요.</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {METRICS_COST_FIELDS.map(f => (
                   <label key={f.key} className="text-xs text-gray-600">{f.label}

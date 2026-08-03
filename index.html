@@ -2560,9 +2560,10 @@ function App() {
     setReportSendPending(true);
     setReportSendError('');
     const base = window.location.origin + window.location.pathname;
-    // 임시 진단: 버튼 링크를 등록된 고정 주소 그대로 보내 "동적 링크가 불일치 원인인지" 확인 중.
+    // 임시 진단 2단계: 고정 링크는 성공 확인됨 → 이번엔 "짧은" 동적 값으로 테스트해
+    // 실패 원인이 "동적 자체가 불가"인지 "너무 긴 데이터"인지 구분한다.
     // 원인 확정되면 개인화 링크(#r=...)로 되돌릴 것.
-    const reportUrl = base;
+    const reportUrl = base + '#r=test123';
     sendAlimtalk(data.alimtalkProxyUrl, s.parentPhone, 'monthly_report', {
       studentName: s.name, academyName: data.academyName, month: info.monthLabel,
       className: s.className, attendanceRate: info.attendanceRate, homeworkRate: info.homeworkRate,

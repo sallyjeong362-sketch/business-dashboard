@@ -2560,10 +2560,11 @@ function App() {
     setReportSendPending(true);
     setReportSendError('');
     const base = window.location.origin + window.location.pathname;
-    // 임시 진단 2단계: 고정 링크는 성공 확인됨 → 이번엔 "짧은" 동적 값으로 테스트해
-    // 실패 원인이 "동적 자체가 불가"인지 "너무 긴 데이터"인지 구분한다.
-    // 원인 확정되면 개인화 링크(#r=...)로 되돌릴 것.
-    const reportUrl = base + '#r=test123';
+    // 진단 결과: 등록된 버튼 링크와 조금이라도 다르면(짧은 값이어도) 발송이 막힌다 —
+    // 이 템플릿의 웹링크 버튼은 완전 고정형으로 승인된 것으로 확인됨. 학생별 개인화 링크는
+    // 알리고에 "가변형 URL" 등록 방법을 확인하기 전까지, 우선 고정 링크로 발송해 실제
+    // 알림톡은 정상적으로 도착하게 한다.
+    const reportUrl = base;
     sendAlimtalk(data.alimtalkProxyUrl, s.parentPhone, 'monthly_report', {
       studentName: s.name, academyName: data.academyName, month: info.monthLabel,
       className: s.className, attendanceRate: info.attendanceRate, homeworkRate: info.homeworkRate,
@@ -2598,7 +2599,7 @@ function App() {
       title: `${s.name} 먼슬리 리포트 (${info.monthLabel})`,
       recipients: [{ name: s.name + ' 학부모', phone: s.parentPhone }],
       previewText: preview,
-      previewNote: '메시지 하단의 버튼을 누르면 출결·시험·점수·코멘트가 담긴 열람 전용 리포트 페이지가 열립니다 (대시보드 데이터 접근 없음).',
+      previewNote: '⚠ 현재 버튼은 학생별 리포트가 아니라 대시보드 첫 화면으로 연결됩니다 (알리고에 등록된 웹링크 버튼이 고정 주소만 허용해서, 개인화 링크는 아직 지원되지 않아요).',
       doSend: () => sendMonthlyReport(s, info),
     });
   }

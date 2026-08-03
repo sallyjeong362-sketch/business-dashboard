@@ -2560,7 +2560,9 @@ function App() {
     setReportSendPending(true);
     setReportSendError('');
     const base = window.location.origin + window.location.pathname;
-    const reportUrl = base + '#r=' + encodeSharedReport({ ...info.payload, cm: comment || undefined });
+    // 임시 진단: 버튼 링크를 등록된 고정 주소 그대로 보내 "동적 링크가 불일치 원인인지" 확인 중.
+    // 원인 확정되면 개인화 링크(#r=...)로 되돌릴 것.
+    const reportUrl = base;
     sendAlimtalk(data.alimtalkProxyUrl, s.parentPhone, 'monthly_report', {
       studentName: s.name, academyName: data.academyName, month: info.monthLabel,
       className: s.className, attendanceRate: info.attendanceRate, homeworkRate: info.homeworkRate,

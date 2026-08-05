@@ -776,9 +776,11 @@ function studentSortComparator(sortKey) {
    자동 제외한다. 과거 기록(출결·납부·시험·리포트)은 모두 보존되고,
    인적사항에는 퇴소 배지와 함께 계속 표시된다. 퇴소일 당일까지는 재원으로 취급.
    반이 보관(삭제) 처리된 경우도 마찬가지로 오늘 기준 "진행 중" 명단에서는 빠지지만
-   과거 기록·인적사항은 그대로 열람 가능하다. */
+   과거 기록·인적사항은 그대로 열람 가능하다. 홀딩(일시 중지) 처리된 학생도
+   같은 방식으로 잠시 빠졌다가, 체크 해제하면 바로 다시 반영된다. */
 function isActiveStudent(s, dateStr) {
   if (s.classArchived) return false;
+  if (s.onHold) return false;
   return !s.withdrawDate || s.withdrawDate >= dateStr;
 }
 // 해당 월에 하루라도 재원했으면 그 달의 수납 대상에 포함
@@ -3420,12 +3422,15 @@ function App() {
             <SummaryCard
               label="재원생 수"
               value={(() => {
-                const all = groupStudentsByName(allStudents(data)).length;
+                const allG = groupStudentsByName(allStudents(data));
+                const all = allG.length;
                 const active = groupStudentsByName(allStudents(data).filter(s => isActiveStudent(s, todayStr()))).length;
-                const withdrawn = all - active;
+                const withdrawn = allG.filter(g => g.entries[0].withdrawDate).length;
+                const onHold = allG.filter(g => g.entries[0].onHold && !g.entries[0].withdrawDate).length;
                 const regs = allStudents(data).length;
                 return active + '명'
                   + (withdrawn > 0 ? ` · 퇴소 ${withdrawn}명` : '')
+                  + (onHold > 0 ? ` · 홀딩 ${onHold}명` : '')
                   + (regs !== all ? ` (반 등록 ${regs}건)` : '');
               })()}
               tone="bg-indigo-50 text-indigo-700"
@@ -3475,7 +3480,7 @@ function App() {
                 <div key={g.name} className="px-4 py-3">
                   <div className="flex items-center justify-between text-sm flex-wrap gap-2">
                     <div>
-                      <span className={`font-medium ${s.withdrawDate || g.entries.every(e => e.classArchived) ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{g.name}</span>
+                      <span className={`font-medium ${s.withdrawDate || s.onHold || g.entries.every(e => e.classArchived) ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{g.name}</span>
                       {g.entries.map(e => (
                         <span key={e.id} className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full align-middle ${e.classArchived ? 'bg-gray-200 text-gray-500' : 'bg-indigo-50 text-indigo-700'}`}>
                           {e.className}{e.classArchived ? ' (보관됨)' : ''}
@@ -3484,7 +3489,10 @@ function App() {
                       {s.withdrawDate && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 align-middle">퇴소 {s.withdrawDate}</span>
                       )}
-                      {!s.withdrawDate && worstAttendanceStreakBadge(data, g.entries) && (
+                      {!s.withdrawDate && s.onHold && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 align-middle">⏸ 홀딩 중{s.holdMemo ? ` · ${s.holdMemo}` : ''}</span>
+                      )}
+                      {!s.withdrawDate && !s.onHold && worstAttendanceStreakBadge(data, g.entries) && (
                         <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full border align-middle font-medium ${worstAttendanceStreakBadge(data, g.entries).color}`}>
                           {worstAttendanceStreakBadge(data, g.entries).label}
                         </span>
@@ -4044,6 +4052,7 @@ function App() {
                                     s.parentPhone,
                                     s.enrollDate && `등록 ${s.enrollDate}`,
                                     s.withdrawDate && `퇴소 ${s.withdrawDate}`,
+                                    s.onHold && `⏸ 홀딩 중${s.holdMemo ? ' · ' + s.holdMemo : ''}`,
                                     s.paymentDueDay && `매월 ${s.paymentDueDay}일 결제`,
                                   ].filter(Boolean).join(' · ')}
                                 </p>
@@ -5998,11 +6007,14 @@ function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, on
     withdrawDate: student.withdrawDate || '',
     paymentDueDay: student.paymentDueDay || '',
     memo: student.memo || '',
+    onHold: student.onHold || false,
+    holdMemo: student.holdMemo || '',
   });
   const [assign, setAssign] = useState(selectedClassIds || []);
   const withClasses = !!classes;
   const saveDisabled = withClasses && (!f.name.trim() || (isNew && assign.length === 0));
   const set = k => e => setF(prev => ({ ...prev, [k]: e.target.value }));
+  const setChecked = k => e => setF(prev => ({ ...prev, [k]: e.target.checked }));
   const toggleAssign = id => setAssign(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const inputCls = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm mt-1 bg-white';
   return (
@@ -6039,6 +6051,20 @@ function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, on
         <label className="text-xs text-gray-600">메모 (특이사항)
           <input value={f.memo} onChange={set('memo')} className={inputCls} />
         </label>
+      </div>
+      <div className="mt-2.5 pt-2.5 border-t border-dashed border-indigo-200">
+        <label className="text-xs text-gray-700 flex items-center gap-1.5">
+          <input type="checkbox" checked={f.onHold} onChange={setChecked('onHold')} />
+          ⏸ 수업 홀딩 중 (한 달 휴원, 내신 대비 등 일시 중지 — 재원생 수·시간표·수납현황에서 잠시 빠집니다)
+        </label>
+        {f.onHold && (
+          <input
+            value={f.holdMemo}
+            onChange={set('holdMemo')}
+            placeholder="예: 9월 첫째 주 복귀 예정 / 중간고사 대비 2주 홀딩"
+            className={inputCls + ' mt-1.5'}
+          />
+        )}
       </div>
       {withClasses && (
         <div className="mt-3 pt-3 border-t border-dashed border-indigo-200">

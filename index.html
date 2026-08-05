@@ -739,7 +739,7 @@ function sendAlimtalk(proxyUrl, to, templateCode, variables) {
 
 function allStudents(data) {
   const map = {};
-  data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id, teacher: c.teacher }; }));
+  data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id, teacher: c.teacher, classArchived: !!c.archived }; }));
   return Object.values(map);
 }
 
@@ -774,8 +774,11 @@ function studentSortComparator(sortKey) {
 
 /* 퇴소 처리: 퇴소일자가 지난 학생은 출결·수납·시험 등 "진행 중" 명단에서
    자동 제외한다. 과거 기록(출결·납부·시험·리포트)은 모두 보존되고,
-   인적사항에는 퇴소 배지와 함께 계속 표시된다. 퇴소일 당일까지는 재원으로 취급. */
+   인적사항에는 퇴소 배지와 함께 계속 표시된다. 퇴소일 당일까지는 재원으로 취급.
+   반이 보관(삭제) 처리된 경우도 마찬가지로 오늘 기준 "진행 중" 명단에서는 빠지지만
+   과거 기록·인적사항은 그대로 열람 가능하다. */
 function isActiveStudent(s, dateStr) {
+  if (s.classArchived) return false;
   return !s.withdrawDate || s.withdrawDate >= dateStr;
 }
 // 해당 월에 하루라도 재원했으면 그 달의 수납 대상에 포함
@@ -1820,7 +1823,7 @@ function App() {
 
   const todayClasses = useMemo(() => {
     return data.classes
-      .filter(c => c.days.includes(weekday))
+      .filter(c => !c.archived && c.days.includes(weekday))
       .sort((a,b) => classTimeForDay(a, weekday).time.localeCompare(classTimeForDay(b, weekday).time));
   }, [data.classes, weekday]);
 
@@ -1969,8 +1972,19 @@ function App() {
   }
 
   function deleteClass(id) {
-    if (!confirm('이 반을 삭제하시겠습니까?')) return;
-    setData(prev => ({ ...prev, classes: prev.classes.filter(c => c.id !== id) }));
+    if (!confirm('이 반을 삭제(보관)하시겠습니까?\n출결·수업내용·시험·수납 등 기존 기록과 학생 인적사항은 그대로 보존되어 "보관된 반"에서 계속 열람할 수 있습니다. 다만 재원생 수·시간표·수납현황에는 더 이상 반영되지 않습니다.')) return;
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => c.id === id ? { ...c, archived: true, archivedAt: todayStr() } : c),
+    }));
+  }
+
+  function restoreClass(id) {
+    if (!confirm('이 반을 복원하시겠습니까? 다시 재원생 수·시간표·수납현황에 반영됩니다.')) return;
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => c.id === id ? { ...c, archived: false, archivedAt: undefined } : c),
+    }));
   }
 
   function addStudent(classId) {
@@ -3440,7 +3454,7 @@ function App() {
           {directoryFormFor === 'new' ? (
             <StudentEditForm
               student={{}}
-              classes={data.classes}
+              classes={data.classes.filter(c => !c.archived)}
               selectedClassIds={[]}
               isNew
               onSave={(fields, classIds) => saveStudentMaster(null, fields, classIds)}
@@ -3461,9 +3475,11 @@ function App() {
                 <div key={g.name} className="px-4 py-3">
                   <div className="flex items-center justify-between text-sm flex-wrap gap-2">
                     <div>
-                      <span className={`font-medium ${s.withdrawDate ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{g.name}</span>
+                      <span className={`font-medium ${s.withdrawDate || g.entries.every(e => e.classArchived) ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{g.name}</span>
                       {g.entries.map(e => (
-                        <span key={e.id} className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 align-middle">{e.className}</span>
+                        <span key={e.id} className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full align-middle ${e.classArchived ? 'bg-gray-200 text-gray-500' : 'bg-indigo-50 text-indigo-700'}`}>
+                          {e.className}{e.classArchived ? ' (보관됨)' : ''}
+                        </span>
                       ))}
                       {s.withdrawDate && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 align-middle">퇴소 {s.withdrawDate}</span>
@@ -3769,15 +3785,15 @@ function App() {
             {bulkGradeApplyFlash && <p className="text-xs text-indigo-600 mt-2">{bulkGradeApplyFlash}</p>}
           </div>
 
-          {data.classes.length > 0 && (
+          {data.classes.filter(c => !c.archived).length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
               <p className="text-sm font-medium text-gray-900 mb-1">반별 수업료 일괄 적용</p>
               <p className="text-xs text-gray-500 mb-2">같은 학년이라도 반마다 수업료가 다를 때, 특정 반 학생 전체에게 한 번에 적용할 수 있어요.</p>
               <div className="flex gap-2 flex-wrap items-end">
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">반</label>
-                  <select value={bulkClassSelect || data.classes[0].id} onChange={e => setBulkClassSelect(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-                    {data.classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <select value={bulkClassSelect || data.classes.filter(c => !c.archived)[0].id} onChange={e => setBulkClassSelect(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                    {data.classes.filter(c => !c.archived).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -3785,7 +3801,7 @@ function App() {
                   <input type="number" min="0" value={bulkClassAmount} onChange={e => setBulkClassAmount(e.target.value)} placeholder="예: 400000"
                     className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40" />
                 </div>
-                <button onClick={() => bulkSetTuitionByClass(bulkClassSelect || data.classes[0].id, parseInt(bulkClassAmount, 10))} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white">
+                <button onClick={() => bulkSetTuitionByClass(bulkClassSelect || data.classes.filter(c => !c.archived)[0].id, parseInt(bulkClassAmount, 10))} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white">
                   해당 반 전체 적용
                 </button>
               </div>
@@ -3793,7 +3809,7 @@ function App() {
             </div>
           )}
 
-          {data.classes.length > 0 && (
+          {data.classes.filter(c => !c.archived).length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
               <p className="text-sm font-medium text-gray-900 mb-1">📚 반별 교재비 일괄 설정 ({monthKeyLabel(activePaymentMonthKey())})</p>
               <p className="text-xs text-gray-500 mb-2">
@@ -3803,8 +3819,8 @@ function App() {
               <div className="flex gap-2 flex-wrap items-end">
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">반</label>
-                  <select value={bookFeeClassSelect || data.classes[0].id} onChange={e => setBookFeeClassSelect(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-                    {data.classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <select value={bookFeeClassSelect || data.classes.filter(c => !c.archived)[0].id} onChange={e => setBookFeeClassSelect(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+                    {data.classes.filter(c => !c.archived).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -3812,7 +3828,7 @@ function App() {
                   <input type="number" min="0" value={bookFeeClassAmount} onChange={e => setBookFeeClassAmount(e.target.value)} placeholder="예: 45000"
                     className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40" />
                 </div>
-                <button onClick={() => bulkSetBookFeeByClass(bookFeeClassSelect || data.classes[0].id, parseInt(bookFeeClassAmount, 10))} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white">
+                <button onClick={() => bulkSetBookFeeByClass(bookFeeClassSelect || data.classes.filter(c => !c.archived)[0].id, parseInt(bookFeeClassAmount, 10))} className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white">
                   해당 반 전체 적용
                 </button>
               </div>
@@ -3960,6 +3976,7 @@ function App() {
             + 새 반 추가
           </button>
           {data.classes
+            .filter(c => !c.archived)
             .slice()
             .sort((a, b) => {
               if (manageSort === 'class') return a.name.localeCompare(b.name, 'ko');
@@ -4165,6 +4182,54 @@ function App() {
               </div>
             );
           })}
+          {data.classes.some(c => c.archived) && (
+            <div className="mt-4 pt-3 border-t border-dashed border-gray-300">
+              <p className="text-xs font-semibold text-gray-400 mb-2">
+                📦 보관된 반 ({data.classes.filter(c => c.archived).length}개) — 재원생 수·시간표·수납현황에는 반영되지 않지만 기록은 그대로 열람할 수 있습니다.
+              </p>
+              {data.classes.filter(c => c.archived).map(c => {
+                const expanded = !!manageExpanded[c.id];
+                return (
+                  <div key={c.id} className="bg-gray-50 border border-gray-200 rounded-xl p-4 mt-2">
+                    <div
+                      className="flex items-center justify-between cursor-pointer -m-1 p-1 rounded-lg hover:bg-gray-100"
+                      onClick={() => setManageExpanded(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                    >
+                      <div>
+                        <p className="font-medium text-gray-500">
+                          {c.name}
+                          <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 align-middle font-semibold">보관됨{c.archivedAt ? ` · ${c.archivedAt}` : ''}</span>
+                        </p>
+                        <p className="text-xs text-gray-400">{c.teacher} · {c.room} · {classScheduleSummary(c)} · 학생 {c.students.length}명</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          onClick={e => { e.stopPropagation(); restoreClass(c.id); }}
+                          className="text-xs text-indigo-600 hover:underline"
+                        >복원</button>
+                        <span className={`text-xs text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+                      </div>
+                    </div>
+                    {expanded && (
+                      <div className="space-y-1.5 mt-3">
+                        {c.students.map(s => (
+                          <div key={s.id} className="bg-white px-2.5 py-1.5 rounded-lg text-xs">
+                            <span className="text-gray-600 font-medium">{s.name}</span>
+                            {(s.school || s.grade || s.parentPhone) && (
+                              <p className="text-gray-400 mt-0.5">
+                                {[s.school, s.grade, s.parentPhone].filter(Boolean).join(' · ')}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                        {c.students.length === 0 && <p className="text-xs text-gray-400">등록된 학생이 없습니다.</p>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -4907,13 +4972,13 @@ function App() {
               <p className="text-xs text-gray-400 mb-3">
                 정원은 반 관리의 정보 수정에서 입력합니다. 재원생이 정원에 차면 마감으로 표시되고, 퇴소생이 생기면 자동으로 풀려요.
                 {(() => {
-                  const withCap = data.classes.filter(c => classCapacityInfo(c).capacity > 0);
+                  const withCap = data.classes.filter(c => !c.archived && classCapacityInfo(c).capacity > 0);
                   const fullCount = withCap.filter(c => classCapacityInfo(c).full).length;
                   return withCap.length ? ` (마감 ${fullCount}개 / 정원 설정 ${withCap.length}개 반)` : '';
                 })()}
               </p>
               <div className="divide-y divide-gray-100">
-                {data.classes.map(c => {
+                {data.classes.filter(c => !c.archived).map(c => {
                   const cap = classCapacityInfo(c);
                   return (
                     <div key={c.id} className="flex items-center justify-between py-2 text-sm flex-wrap gap-1.5">
@@ -5009,8 +5074,8 @@ function App() {
                         <TeacherEditForm
                           name={t.teacher}
                           salary={t.salary}
-                          classes={data.classes}
-                          selectedClassIds={data.classes.filter(c => ((c.teacher || '').trim() || '담당 미지정') === t.teacher).map(c => c.id)}
+                          classes={data.classes.filter(c => !c.archived)}
+                          selectedClassIds={data.classes.filter(c => !c.archived && ((c.teacher || '').trim() || '담당 미지정') === t.teacher).map(c => c.id)}
                           onSave={(newName, salary, classIds) => saveTeacherInfo(t.teacher, newName, salary, classIds)}
                           onCancel={() => setTeacherFormFor(null)}
                         />
@@ -5955,9 +6020,9 @@ function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, on
           <p className="text-xs font-semibold text-gray-600 mb-1.5">소속 반 (체크한 반의 명단에 들어갑니다)</p>
           <div className="flex flex-wrap gap-x-4 gap-y-1.5">
             {classes.map(c => (
-              <label key={c.id} className="text-xs text-gray-700 flex items-center gap-1.5">
+              <label key={c.id} className={`text-xs flex items-center gap-1.5 ${c.archived ? 'text-gray-400' : 'text-gray-700'}`}>
                 <input type="checkbox" checked={assign.includes(c.id)} onChange={() => toggleAssign(c.id)} />
-                {c.name}
+                {c.name}{c.archived ? ' (보관됨)' : ''}
               </label>
             ))}
           </div>

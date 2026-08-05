@@ -5865,8 +5865,15 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
     teacher: cls.teacher || '',
     room: cls.room || '',
     capacity: cls.capacity || '',
+    time: cls.time || '',
+    endTime: cls.endTime || '',
+    days: cls.days || [],
   });
   const set = k => e => setF(prev => ({ ...prev, [k]: e.target.value }));
+  const toggleDay = d => setF(prev => ({
+    ...prev,
+    days: prev.days.includes(d) ? prev.days.filter(x => x !== d) : [...prev.days, d],
+  }));
   const inputCls = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm mt-1 bg-white';
   return (
     <div className="w-full bg-indigo-50/60 border border-indigo-200 rounded-xl p-3 mt-2">
@@ -5886,14 +5893,32 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
         <label className="text-xs text-gray-600">정원 (명)
           <input type="number" min="0" value={f.capacity} onChange={set('capacity')} placeholder="예: 8" className={inputCls} />
         </label>
+        <label className="text-xs text-gray-600">시작 시간
+          <input type="time" value={f.time} onChange={set('time')} className={inputCls} />
+        </label>
+        <label className="text-xs text-gray-600">종료 시간
+          <input type="time" value={f.endTime} onChange={set('endTime')} className={inputCls} />
+        </label>
       </div>
-      <p className="text-xs text-gray-400 mt-2">정원을 입력하면 재원생(퇴소생 제외)이 정원에 찼을 때 "정원 마감"이 자동 표시되고, 퇴소생이 생기면 자동으로 풀립니다. 담당 선생님 변경은 경영지표·업무일지에 바로 반영돼요. 수업 시간·요일 변경은 관리자 탭에서.</p>
+      <div className="mt-2.5">
+        <p className="text-xs text-gray-600 mb-1">요일</p>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {DAYS.map(d => (
+            <label key={d} className="text-xs text-gray-700 flex items-center gap-1">
+              <input type="checkbox" checked={f.days.includes(d)} onChange={() => toggleDay(d)} />
+              {d}
+            </label>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-gray-400 mt-2">정원을 입력하면 재원생(퇴소생 제외)이 정원에 찼을 때 "정원 마감"이 자동 표시되고, 퇴소생이 생기면 자동으로 풀립니다. 담당 선생님 변경은 경영지표·업무일지에 바로 반영돼요. 요일마다 시간이 다르게 필요하면 관리자 탭에서 설정할 수 있어요.</p>
       <div className="flex gap-2 mt-3">
         <button
           disabled={!f.name.trim()}
           onClick={() => onSave({
             name: f.name.trim(), teacher: f.teacher.trim(), room: f.room.trim(),
             capacity: f.capacity === '' ? '' : Math.max(0, parseInt(f.capacity, 10) || 0),
+            time: f.time, endTime: f.endTime, days: f.days,
           })}
           className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">저장</button>
         <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">취소</button>

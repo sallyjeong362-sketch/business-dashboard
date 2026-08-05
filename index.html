@@ -783,6 +783,14 @@ function isActiveInMonth(s, monthKey) {
   return !s.withdrawDate || s.withdrawDate >= monthKey + '-01';
 }
 
+// 수납현황 명단·미납 알림 대상: 이번 달(또는 미래 달)을 보는 중이면 "지금 재원 중인지"로
+// 판단해, 이미 퇴소한 학생은 그 달에 며칠 다녔더라도 명단에서 빠지고 미납 알림도 안 간다
+// (헷갈림 방지). 지난 달 기록을 조회할 때는 그 달에 실제 재원했던 그대로 보여준다(기록 보존).
+function isActiveForPaymentView(s, monthKey) {
+  if (monthKey >= currentMonthKey()) return isActiveStudent(s, todayStr());
+  return isActiveInMonth(s, monthKey);
+}
+
 // 반 정원: 재원생(퇴소생 제외)이 정원에 차면 마감, 퇴소생이 생기면 자동으로 풀린다.
 function classCapacityInfo(c) {
   const active = c.students.filter(s => isActiveStudent(s, todayStr())).length;
@@ -1115,7 +1123,7 @@ function paymentDisplayStatus(student, monthKey, record) {
 }
 
 function computePaymentSummary(data, monthKey) {
-  const students = allStudents(data).filter(s => isActiveInMonth(s, monthKey));
+  const students = allStudents(data).filter(s => isActiveForPaymentView(s, monthKey));
   let paidCount = 0, totalDue = 0, totalCollected = 0;
   students.forEach(s => {
     const t = getTuitionRecord(data, s.id, monthKey);
@@ -3051,7 +3059,7 @@ function App() {
     const tomorrowDay = tomorrow.getDate();
     const monthKey = currentMonthKey();
     const dueToday = [], dueTomorrow = [], unpaidList = [];
-    allStudents(data).filter(s => isActiveInMonth(s, monthKey)).forEach(s => {
+    allStudents(data).filter(s => isActiveForPaymentView(s, monthKey)).forEach(s => {
       const t = getTuitionRecord(data, s.id, monthKey);
       if (s.paymentDueDay === todayDay) dueToday.push(s);
       else if (s.paymentDueDay === tomorrowDay) dueTomorrow.push(s);
@@ -3857,7 +3865,7 @@ function App() {
                 )}
 
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-                  {allStudents(data).filter(s => isActiveInMonth(s, paymentMonthKey)).sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
+                  {allStudents(data).filter(s => isActiveForPaymentView(s, paymentMonthKey)).sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
                     const p = getTuitionRecord(data, s.id, paymentMonthKey);
                     const bfChips = bookFeeChips(data, s.id, paymentMonthKey);
                     const bfOut = bookFeeOutstanding(data, s.id, paymentMonthKey);

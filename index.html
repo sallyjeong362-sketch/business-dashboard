@@ -1056,26 +1056,42 @@ function tuitionOutstanding(data, studentId, monthKey) {
   return { items, total: items.reduce((sum, it) => sum + it.tuition, 0) };
 }
 
-/* 교재비: 수업료처럼 월별 청구(bookFeesByMonth[YYYY-MM][studentId] = {fee, status, paidDate}).
-   완납한 교재비는 다음 달에 다시 나타나지 않고, 미납분은 납부할 때까지
-   다음 달로 이월 누적되어 "한 번에 결제" 대상으로 표시된다. */
+/* 교재비: 수업료처럼 월별 청구(bookFeesByMonth[YYYY-MM][studentId] = {fee, status, paidDate, payments}).
+   payments는 [{date, amount}] 형태의 실제 납부 내역 목록 — 부분납이 여러 번에 걸쳐 이뤄져도
+   각각 언제 얼마씩 냈는지 남는다. 완납한 교재비는 다음 달에 다시 나타나지 않고, 미납분·부분납의
+   남은 금액은 완납할 때까지 다음 달로 이월 누적되어 "한 번에 결제" 대상으로 표시된다. */
 function getBookFeeMonthRecord(data, studentId, monthKey) {
   return (data.bookFeesByMonth && data.bookFeesByMonth[monthKey] && data.bookFeesByMonth[monthKey][studentId]) || null;
 }
 
-// monthKey까지(포함) 아직 납부되지 않은 교재비 이월 누적 내역
+function bookFeePaidAmount(r) {
+  if (!r) return 0;
+  const fromLog = (r.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
+  if (fromLog > 0) return fromLog;
+  // 부분납 기능 도입 전 기록(납부 로그 없이 status만 있던 데이터) 호환: 완납이었다면 전액으로 간주
+  if (r.status === 'paid') return r.fee || 0;
+  return 0;
+}
+
+function bookFeeRemaining(r) {
+  return Math.max(0, ((r && r.fee) || 0) - bookFeePaidAmount(r));
+}
+
+// monthKey까지(포함) 아직 다 납부되지 않은 교재비 이월 누적 내역 (부분납의 남은 금액 포함)
 function bookFeeOutstanding(data, studentId, monthKey) {
   const byMonth = data.bookFeesByMonth || {};
   const items = [];
   Object.keys(byMonth).sort().forEach(mk => {
     if (mk > monthKey) return;
     const r = byMonth[mk][studentId];
-    if (r && (r.fee || 0) > 0 && r.status !== 'paid') items.push({ monthKey: mk, fee: r.fee });
+    if (!r || (r.fee || 0) <= 0) return;
+    const remaining = bookFeeRemaining(r);
+    if (remaining > 0) items.push({ monthKey: mk, fee: r.fee, remaining, paidAmount: bookFeePaidAmount(r) });
   });
-  return { items, total: items.reduce((sum, it) => sum + it.fee, 0) };
+  return { items, total: items.reduce((sum, it) => sum + it.remaining, 0), hasPartial: items.some(it => it.paidAmount > 0) };
 }
 
-// 상태 칩 표시용: 보고 있는 달의 청구 + 이월된 미납분만 (지난달 완납분은 숨김)
+// 상태 칩 표시용: 보고 있는 달의 청구 + 이월된 미납·부분납만 (지난달 완납분은 숨김)
 function bookFeeChips(data, studentId, monthKey) {
   const byMonth = data.bookFeesByMonth || {};
   const items = [];
@@ -1083,7 +1099,8 @@ function bookFeeChips(data, studentId, monthKey) {
     if (mk > monthKey) return;
     const r = byMonth[mk][studentId];
     if (!r || (r.fee || 0) <= 0) return;
-    if (mk === monthKey || r.status !== 'paid') items.push({ monthKey: mk, fee: r.fee, status: r.status });
+    const remaining = bookFeeRemaining(r);
+    if (mk === monthKey || remaining > 0) items.push({ monthKey: mk, fee: r.fee, status: r.status, remaining, paidAmount: bookFeePaidAmount(r) });
   });
   return items;
 }
@@ -1104,9 +1121,21 @@ function ensureBookFeeMonthRecord(next, studentId, monthKey) {
   if (!next.bookFeesByMonth) next.bookFeesByMonth = {};
   if (!next.bookFeesByMonth[monthKey]) next.bookFeesByMonth[monthKey] = {};
   if (!next.bookFeesByMonth[monthKey][studentId]) {
-    next.bookFeesByMonth[monthKey][studentId] = { fee: 0, status: 'unpaid', paidDate: null };
+    next.bookFeesByMonth[monthKey][studentId] = { fee: 0, status: 'unpaid', paidDate: null, payments: [] };
   }
+  if (!next.bookFeesByMonth[monthKey][studentId].payments) next.bookFeesByMonth[monthKey][studentId].payments = [];
   return next.bookFeesByMonth[monthKey][studentId];
+}
+
+// 이미 클론된 next 초안을 그대로 변형한다(다른 곳과 같은 setData(prev => { const next = ...; ... })
+// 패턴). amount만큼 납부 기록을 추가하고, 남은 금액에 따라 상태를 완납/부분납/미납으로 갱신한다.
+function addBookFeePayment(next, studentId, monthKey, amount) {
+  const r = ensureBookFeeMonthRecord(next, studentId, monthKey);
+  if (amount > 0) r.payments.push({ date: todayStr(), amount });
+  const paid = bookFeePaidAmount(r);
+  if (paid <= 0) { r.status = 'unpaid'; r.paidDate = null; }
+  else if (paid >= (r.fee || 0)) { r.status = 'paid'; r.paidDate = todayStr(); }
+  else { r.status = 'partial'; r.paidDate = todayStr(); }
 }
 
 // Before this month's due date arrives, an unpaid record isn't "미납(연체)" yet — it's simply not
@@ -1135,13 +1164,19 @@ function computePaymentSummary(data, monthKey) {
     totalDue += t.tuition || 0;
     if (t.status === 'paid') { paidCount++; totalCollected += t.tuition || 0; }
   });
-  // 교재비 수납액: 실제로 그 달에 납부된 금액(paidDate 기준) — 이월분을 나중에 내면 낸 달에 잡힌다
+  // 교재비 수납액: 실제로 그 달에 들어온 납부 금액 — 부분납이어도 낸 만큼, 낸 달에 잡힌다
+  // (이월분을 다음 달에 나눠 내면 각각 낸 달에 반영됨)
   let bookFeeCollected = 0;
   const byMonth = data.bookFeesByMonth || {};
   Object.keys(byMonth).forEach(mk => {
     Object.keys(byMonth[mk]).forEach(sid => {
       const r = byMonth[mk][sid];
-      if (r.status === 'paid' && (r.paidDate || '').startsWith(monthKey)) bookFeeCollected += r.fee || 0;
+      if (r.payments && r.payments.length) {
+        r.payments.forEach(p => { if ((p.date || '').startsWith(monthKey)) bookFeeCollected += p.amount || 0; });
+      } else if (r.status === 'paid' && (r.paidDate || '').startsWith(monthKey)) {
+        // 부분납 기능 도입 전 기록(납부 로그 없음) 호환
+        bookFeeCollected += r.fee || 0;
+      }
     });
   });
   const rate = students.length ? Math.round((paidCount / students.length) * 100) : 0;
@@ -2213,19 +2248,46 @@ function App() {
     });
   }
 
-  // 특정 달의 교재비 완납/미납 토글 (칩 클릭)
+  // 특정 달의 교재비 완납/미납 토글 (칩 클릭). 완납 상태면 미납으로 되돌리고(납부 기록 초기화),
+  // 미납·부분납 상태면 남은 금액을 한 번에 완납 처리한다. 부분 금액만 입력하려면
+  // "부분납 입력" 버튼(payPartialBookFee)을 쓴다.
   function toggleBookFeeMonth(studentId, monthKey) {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       const r = next.bookFeesByMonth?.[monthKey]?.[studentId];
       if (!r) return prev;
-      if (r.status === 'paid') { r.status = 'unpaid'; r.paidDate = null; }
-      else { r.status = 'paid'; r.paidDate = todayStr(); }
+      if (!r.payments) r.payments = [];
+      const remaining = bookFeeRemaining(r);
+      if (remaining <= 0) {
+        r.payments = [];
+        r.status = 'unpaid';
+        r.paidDate = null;
+      } else {
+        addBookFeePayment(next, studentId, monthKey, remaining);
+      }
       return next;
     });
   }
 
-  // 이월 누적된 미납 교재비를 한 번에 완납 처리
+  // 이 달(또는 이월된 과거 달) 교재비를 일부만 납부한 경우 사용 — 남은 금액 중 일부만 입력하면
+  // 나머지는 계속 부분납 상태로 다음 달까지 이월된다.
+  function payPartialBookFee(studentId, monthKey) {
+    const r0 = getBookFeeMonthRecord(data, studentId, monthKey);
+    const remaining = bookFeeRemaining(r0);
+    if (remaining <= 0) { alert('이미 완납된 교재비입니다.'); return; }
+    const amountStr = prompt(`${monthKeyLabel(monthKey)} 교재비 부분 납부 금액 입력 (원)\n남은 금액: ${remaining.toLocaleString()}원`, String(remaining));
+    if (amountStr === null) return;
+    const amount = parseInt(amountStr, 10);
+    if (isNaN(amount) || amount <= 0) return;
+    const applied = Math.min(amount, remaining);
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      addBookFeePayment(next, studentId, monthKey, applied);
+      return next;
+    });
+  }
+
+  // 이월 누적된 미납·부분납 교재비를 한 번에 완납 처리 (남은 금액만큼 납부 기록을 채운다)
   function payAllBookFees(studentId) {
     const monthKey = activePaymentMonthKey();
     setData(prev => {
@@ -2234,7 +2296,9 @@ function App() {
       Object.keys(byMonth).forEach(mk => {
         if (mk > monthKey) return;
         const r = byMonth[mk][studentId];
-        if (r && (r.fee || 0) > 0 && r.status !== 'paid') { r.status = 'paid'; r.paidDate = todayStr(); }
+        if (!r || (r.fee || 0) <= 0) return;
+        const remaining = bookFeeRemaining(r);
+        if (remaining > 0) addBookFeePayment(next, studentId, mk, remaining);
       });
       return next;
     });
@@ -3822,7 +3886,7 @@ function App() {
               <p className="text-sm font-medium text-gray-900 mb-1">📚 반별 교재비 일괄 설정 ({monthKeyLabel(activePaymentMonthKey())})</p>
               <p className="text-xs text-gray-500 mb-2">
                 이 달에 교재비가 있는 반을 골라 금액을 설정하면 반 학생 전체에게 청구됩니다.
-                완납한 교재비는 다음 달에 다시 나오지 않고, 미납분은 낼 때까지 다음 달로 이월 누적돼요. (0원 적용 = 이 달 청구 없음)
+                완납한 교재비는 다음 달에 다시 나오지 않고, 미납분·부분납으로 남은 금액은 낼 때까지 다음 달로 이월 누적돼요. (0원 적용 = 이 달 청구 없음)
               </p>
               <div className="flex gap-2 flex-wrap items-end">
                 <div>
@@ -3911,17 +3975,18 @@ function App() {
                             <div className="flex gap-1 flex-wrap mt-0.5">
                               {bfChips.map(h => (
                                 <button key={h.monthKey} onClick={() => toggleBookFeeMonth(s.id, h.monthKey)}
-                                  title="누르면 완납/미납이 바뀝니다"
-                                  className={`text-[10px] px-1.5 py-0.5 rounded-full border ${h.status === 'paid' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-orange-100 text-orange-700 border-orange-300'}`}>
-                                  {parseInt(h.monthKey.slice(5, 7), 10)}월 {h.fee.toLocaleString()}원 {h.status === 'paid' ? '완납' : '미납'}
+                                  title="누르면 완납 ↔ 미납이 바뀝니다 (일부만 내려면 '부분납 입력' 사용)"
+                                  className={`text-[10px] px-1.5 py-0.5 rounded-full border ${h.status === 'paid' ? 'bg-green-100 text-green-700 border-green-300' : h.status === 'partial' ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-orange-100 text-orange-700 border-orange-300'}`}>
+                                  {parseInt(h.monthKey.slice(5, 7), 10)}월 {h.fee.toLocaleString()}원 {h.status === 'paid' ? '완납' : h.status === 'partial' ? `부분납 (${h.remaining.toLocaleString()}원 남음)` : '미납'}
                                 </button>
                               ))}
                             </div>
                           )}
                           {bfOut.total > 0 && (
                             <p className="text-[11px] text-red-600 mt-0.5 font-medium">
-                              누적 미납 교재비 {bfOut.total.toLocaleString()}원 — 한 번에 결제 필요
+                              {bfOut.hasPartial ? '부분납 후 남은' : '누적 미납'} 교재비 {bfOut.total.toLocaleString()}원
                               <button onClick={() => payAllBookFees(s.id)} className="ml-1.5 text-indigo-600 hover:underline font-normal">모두 완납 처리</button>
+                              <button onClick={() => payPartialBookFee(s.id, bfOut.items[0].monthKey)} className="ml-1.5 text-indigo-600 hover:underline font-normal">부분납 입력</button>
                             </p>
                           )}
                           {tOut.items.length > 1 && (
@@ -3957,7 +4022,9 @@ function App() {
                       {bfChips.length === 0 ? (
                         <span className="text-xs px-2.5 py-1 rounded-full border bg-gray-100 text-gray-500 border-gray-300">없음</span>
                       ) : bfOut.total > 0 ? (
-                        <span className="text-xs px-2.5 py-1 rounded-full border bg-orange-100 text-orange-700 border-orange-300 font-medium">미납 {bfOut.total.toLocaleString()}원</span>
+                        <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${bfOut.hasPartial ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-orange-100 text-orange-700 border-orange-300'}`}>
+                          {bfOut.hasPartial ? '부분납' : '미납'} {bfOut.total.toLocaleString()}원
+                        </span>
                       ) : (
                         <span className="text-xs px-2.5 py-1 rounded-full border bg-green-100 text-green-700 border-green-300 font-medium">완납</span>
                       )}
@@ -5705,7 +5772,7 @@ function App() {
                         <td className="p-2.5 text-gray-700">{(p.tuition || 0).toLocaleString()}원</td>
                         <td className="p-2.5 text-gray-700">{payLabel}</td>
                         <td className="p-2.5 text-gray-700">{bMonthFee.toLocaleString()}원</td>
-                        <td className="p-2.5 text-gray-700">{bfOut.total > 0 ? `미납 ${bfOut.total.toLocaleString()}원` : (bMonthFee > 0 ? '완납' : '없음')}</td>
+                        <td className="p-2.5 text-gray-700">{bfOut.total > 0 ? `${bfOut.hasPartial ? '부분납' : '미납'} ${bfOut.total.toLocaleString()}원` : (bMonthFee > 0 ? '완납' : '없음')}</td>
                       </tr>
                     );
                   })}

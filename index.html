@@ -5945,10 +5945,23 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
     endTime: cls.endTime || '',
     days: cls.days || [],
   });
+  const [varyByDay, setVaryByDay] = useState(hasVariedTimes(cls));
+  const [daySchedule, setDaySchedule] = useState(() => {
+    const ds = {};
+    (cls.days || []).forEach(d => {
+      const o = cls.daySchedule && cls.daySchedule[d];
+      ds[d] = { time: (o ? o.time : cls.time) || '', endTime: (o ? o.endTime : cls.endTime) || '' };
+    });
+    return ds;
+  });
   const set = k => e => setF(prev => ({ ...prev, [k]: e.target.value }));
   const toggleDay = d => setF(prev => ({
     ...prev,
     days: prev.days.includes(d) ? prev.days.filter(x => x !== d) : [...prev.days, d],
+  }));
+  const setDayTime = (d, key, value) => setDaySchedule(prev => ({
+    ...prev,
+    [d]: { time: prev[d]?.time ?? f.time, endTime: prev[d]?.endTime ?? f.endTime, [key]: value },
   }));
   const inputCls = 'w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm mt-1 bg-white';
   return (
@@ -5987,15 +6000,46 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
           ))}
         </div>
       </div>
-      <p className="text-xs text-gray-400 mt-2">정원을 입력하면 재원생(퇴소생 제외)이 정원에 찼을 때 "정원 마감"이 자동 표시되고, 퇴소생이 생기면 자동으로 풀립니다. 담당 선생님 변경은 경영지표·업무일지에 바로 반영돼요. 요일마다 시간이 다르게 필요하면 관리자 탭에서 설정할 수 있어요.</p>
+      <div className="mt-2.5 pt-2.5 border-t border-dashed border-indigo-200">
+        <label className="text-xs text-gray-700 flex items-center gap-1.5">
+          <input type="checkbox" checked={varyByDay} onChange={e => setVaryByDay(e.target.checked)} />
+          요일마다 시작·종료 시간이 다름
+        </label>
+        {varyByDay && (
+          <div className="mt-1.5 space-y-1.5">
+            {f.days.length === 0 && <p className="text-xs text-gray-400">먼저 위에서 요일을 선택해주세요.</p>}
+            {f.days.map(d => (
+              <div key={d} className="flex items-center gap-2 text-xs">
+                <span className="w-5 text-gray-600 font-medium">{d}</span>
+                <input type="time" value={daySchedule[d]?.time ?? f.time} onChange={e => setDayTime(d, 'time', e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white" />
+                <span className="text-gray-400">~</span>
+                <input type="time" value={daySchedule[d]?.endTime ?? f.endTime} onChange={e => setDayTime(d, 'endTime', e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white" />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-gray-400 mt-2">정원을 입력하면 재원생(퇴소생 제외)이 정원에 찼을 때 "정원 마감"이 자동 표시되고, 퇴소생이 생기면 자동으로 풀립니다. 담당 선생님 변경은 경영지표·업무일지에 바로 반영돼요.</p>
       <div className="flex gap-2 mt-3">
         <button
           disabled={!f.name.trim()}
-          onClick={() => onSave({
-            name: f.name.trim(), teacher: f.teacher.trim(), room: f.room.trim(),
-            capacity: f.capacity === '' ? '' : Math.max(0, parseInt(f.capacity, 10) || 0),
-            time: f.time, endTime: f.endTime, days: f.days,
-          })}
+          onClick={() => {
+            const finalDaySchedule = {};
+            if (varyByDay) {
+              f.days.forEach(d => {
+                const o = daySchedule[d] || {};
+                const t = o.time || f.time;
+                const e2 = o.endTime || f.endTime;
+                if (t !== f.time || e2 !== f.endTime) finalDaySchedule[d] = { time: t, endTime: e2 };
+              });
+            }
+            onSave({
+              name: f.name.trim(), teacher: f.teacher.trim(), room: f.room.trim(),
+              capacity: f.capacity === '' ? '' : Math.max(0, parseInt(f.capacity, 10) || 0),
+              time: f.time, endTime: f.endTime, days: f.days,
+              daySchedule: finalDaySchedule,
+            });
+          }}
           className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">저장</button>
         <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">취소</button>
       </div>

@@ -5140,22 +5140,24 @@ function App() {
                         )}
                       </div>
                     </div>
-                  </div>
-
-                  <div className="space-y-1.5 mb-3">
                     {goals.customGoals.map(g => (
-                      <div key={g.id} className="flex items-center gap-2">
-                        <input type="text" value={g.label}
-                          onChange={e => updateCustomGoal(metricsMonth, g.id, { label: e.target.value })}
-                          placeholder="목표 항목 (예: 학부모 만족도)" className="flex-1 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm" />
+                      <div key={g.id} className="bg-white rounded-lg p-3 border border-gray-100">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <input type="text" value={g.label}
+                            onChange={e => updateCustomGoal(metricsMonth, g.id, { label: e.target.value })}
+                            placeholder="목표 항목 (예: 학부모 만족도)"
+                            className="text-xs text-gray-500 bg-transparent border-0 border-b border-dashed border-gray-200 focus:outline-none focus:border-indigo-400 flex-1 min-w-0 py-0.5" />
+                          <button onClick={() => removeCustomGoal(metricsMonth, g.id)} className="text-xs text-gray-300 hover:text-red-500 shrink-0">삭제</button>
+                        </div>
                         <input type="text" value={g.target}
                           onChange={e => updateCustomGoal(metricsMonth, g.id, { target: e.target.value })}
-                          placeholder="목표 값" className="w-32 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm" />
-                        <button onClick={() => removeCustomGoal(metricsMonth, g.id)} className="text-xs text-gray-400 hover:text-red-500">삭제</button>
+                          placeholder="목표 값 (예: 30명, 500만원)"
+                          className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm" />
                       </div>
                     ))}
-                    <button onClick={() => addCustomGoal(metricsMonth)} className="text-xs text-indigo-600 hover:underline">+ 목표 항목 추가</button>
                   </div>
+
+                  <button onClick={() => addCustomGoal(metricsMonth)} className="text-xs text-indigo-600 hover:underline mb-3 block">+ 목표 항목 추가</button>
 
                   <label className="text-xs text-gray-500 mb-1 block">고객에게 듣고 싶은 말 (확언)</label>
                   <textarea value={goals.customerLanguage}

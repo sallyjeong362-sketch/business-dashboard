@@ -32,7 +32,7 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 
 const STORAGE_KEY = 'academy_dashboard_v2';
 const DAYS = ['일','월','화','수','목','금','토'];
@@ -583,6 +583,19 @@ function getLessonLog(data, date, classId) {
 
 function getClassHomework(data, date, classId) {
   return data.classHomework?.[date]?.[classId] || '';
+}
+
+// 이 날짜보다 이전 중 가장 최근에 이 반의 수업내용(진도)이 적힌 날짜를 찾아 그 내용을 돌려준다.
+// 매번 지난 수업 내용을 찾아 복사-붙여넣기 하지 않도록, 오늘 칸이 비어있을 때 자동으로 이어서
+// 시작할 수 있게 해준다.
+function mostRecentLessonLog(data, classId, beforeDate) {
+  const dates = Object.keys(data.lessonLogs || {}).filter(d => d < beforeDate && data.lessonLogs[d][classId]).sort().reverse();
+  return dates.length ? data.lessonLogs[dates[0]][classId] : '';
+}
+
+function mostRecentClassHomework(data, classId, beforeDate) {
+  const dates = Object.keys(data.classHomework || {}).filter(d => d < beforeDate && data.classHomework[d][classId]).sort().reverse();
+  return dates.length ? data.classHomework[dates[0]][classId] : '';
 }
 
 function getClassCancellation(data, date, classId) {
@@ -1305,7 +1318,10 @@ function computeMetrics(data, monthKey) {
   const rentRate = revenue && exp.rent ? Math.round((exp.rent / revenue) * 100) : null;
   const profit = revenue - totalCost;
   const profitRate = revenue && totalCost ? Math.round((profit / revenue) * 100) : null;
-  const arpu = currentCount ? Math.round(revenue / currentCount) : null;
+  // 매출(revenue)과 같은 모수(pay.total, 청구 대상 학생 수)로 나눠야 "고정 매출액 대비 인원수"가
+  // 되어 값이 안정적이다. 재원생 카운트(currentCount)는 그룹핑·집계 방식이 달라(이름 기준 중복
+  // 제거, 특강반 청구월 제외 여부 등) revenue의 모수와 어긋날 수 있어 쓰지 않는다.
+  const arpu = pay.total ? Math.round(revenue / pay.total) : null;
   return {
     pay, exp, totalCost, revenue, currentCount, newCount, churn, churnRate,
     admissionConsults, convertedCount, conversionRate, laborRate, rentRate, profit, profitRate, arpu,
@@ -1921,6 +1937,28 @@ function App() {
       return changed ? { ...prev, vocabTests } : prev;
     });
   }, [date, todayClasses]);
+
+  // 오늘 진도·숙제 칸이 비어있으면 직전 수업일의 내용을 자동으로 불러와 채워둔다 — 매번 지난
+  // 수업 내용을 찾아 복사-붙여넣기 하지 않고, 바로 이어서 편집만 하면 되도록. 한 번 채운 뒤
+  // 선생님이 일부러 지운 경우까지 다시 덮어쓰지 않도록, 반·날짜 조합마다 한 번만 시도한다.
+  const lessonLogCarryTried = useRef(new Set());
+  useEffect(() => {
+    if (!selectedClassId) return;
+    const key = date + '|' + selectedClassId;
+    if (lessonLogCarryTried.current.has(key)) return;
+    lessonLogCarryTried.current.add(key);
+    const hasLesson = !!getLessonLog(data, date, selectedClassId);
+    const hasHomework = !!getClassHomework(data, date, selectedClassId);
+    if (hasLesson && hasHomework) return;
+    if (!hasLesson) {
+      const prevLesson = mostRecentLessonLog(data, selectedClassId, date);
+      if (prevLesson) setLessonLog(selectedClassId, prevLesson);
+    }
+    if (!hasHomework) {
+      const prevHomework = mostRecentClassHomework(data, selectedClassId, date);
+      if (prevHomework) setClassHomework(selectedClassId, prevHomework);
+    }
+  }, [date, selectedClassId]);
 
   function setVocabTest(studentId, testType, patch) {
     setData(prev => {
@@ -3788,6 +3826,7 @@ function App() {
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                       rows={2}
                     />
+                    <p className="text-[11px] text-gray-400 mt-0.5">비어있으면 직전 수업 내용이 자동으로 채워져요 — 이어서 수정만 하시면 돼요.</p>
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 mb-1 block">오늘 내준 숙제</label>
@@ -3798,6 +3837,7 @@ function App() {
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                       rows={2}
                     />
+                    <p className="text-[11px] text-gray-400 mt-0.5">비어있으면 직전 수업 숙제가 자동으로 채워져요 — 이어서 수정만 하시면 돼요.</p>
                   </div>
                 </div>
               )}

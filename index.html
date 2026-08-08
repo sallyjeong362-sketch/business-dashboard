@@ -833,6 +833,9 @@ function classCapacityInfo(c) {
    예: "단어시험 합격 2회·불합격 1회 (재시험 필요 1건) / 문법시험 합격 2회" */
 // 재시험 필요(retest === 'needed')로 남아있는(완료 처리 안 된) 항목들을 학생별로 묶는다.
 // 퇴소생은 제외. 안내 발송 대상 판단과 화면 목록 표시에 함께 쓰인다.
+// 학생 이름순으로 정렬해 반환한다 — 시험 날짜 순서로 두면, 한 학생의 여러 재시험 중 하나만
+// 완료 처리했을 때 남은 시험의 날짜가 달라 그 학생 줄이 목록에서 위치를 옮겨 다녀
+// 마치 사라진 것처럼 보이는 문제가 있었다. 이름순은 처리 여부와 무관하게 항상 같은 자리다.
 function pendingRetests(data) {
   const studentById = {};
   allStudents(data).forEach(s => { if (isActiveStudent(s, todayStr())) studentById[s.id] = s; });
@@ -850,7 +853,7 @@ function pendingRetests(data) {
       retestDate: v.retestDate || '',
     });
   });
-  return order.map(sid => map[sid]);
+  return order.map(sid => map[sid]).sort((a, b) => a.student.name.localeCompare(b.student.name, 'ko'));
 }
 
 function pendingTestsSummary(tests) {

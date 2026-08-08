@@ -739,7 +739,12 @@ function sendAlimtalk(proxyUrl, to, templateCode, variables) {
 
 function allStudents(data) {
   const map = {};
-  data.classes.forEach(c => c.students.forEach(s => { map[s.id] = { ...s, className: c.name, classId: c.id, teacher: c.teacher, classArchived: !!c.archived }; }));
+  data.classes.forEach(c => c.students.forEach(s => {
+    map[s.id] = {
+      ...s, className: c.name, classId: c.id, teacher: c.teacher, classArchived: !!c.archived,
+      classSpecialBillingMonth: (c.special && c.specialStart) ? c.specialStart.slice(0, 7) : null,
+    };
+  }));
   return Object.values(map);
 }
 
@@ -791,7 +796,10 @@ function isActiveInMonth(s, monthKey) {
 // 수납현황 명단·미납 알림 대상: 이번 달(또는 미래 달)을 보는 중이면 "지금 재원 중인지"로
 // 판단해, 이미 퇴소한 학생은 그 달에 며칠 다녔더라도 명단에서 빠지고 미납 알림도 안 간다
 // (헷갈림 방지). 지난 달 기록을 조회할 때는 그 달에 실제 재원했던 그대로 보여준다(기록 보존).
+// 특강반(수강료를 운영 시작월에 한 번만 일괄로 받는 반)은 그 시작월에만 수납현황에 나타나고,
+// 그 외의 달에는 (반이 아직 운영 중이더라도) 매달 다시 청구되는 것처럼 보이지 않도록 제외한다.
 function isActiveForPaymentView(s, monthKey) {
+  if (s.classSpecialBillingMonth && monthKey !== s.classSpecialBillingMonth) return false;
   if (monthKey >= currentMonthKey()) return isActiveStudent(s, todayStr());
   return isActiveInMonth(s, monthKey);
 }
@@ -1347,9 +1355,14 @@ function computeTeacherMetrics(data, monthKey) {
     byTeacher[t].classNames.push(c.name);
     const activeStudents = c.students.filter(s => isActiveInMonth(s, monthKey));
     byTeacher[t].studentCount += activeStudents.length;
-    activeStudents.forEach(s => {
-      byTeacher[t].revenue += getTuitionRecord(data, s.id, monthKey).tuition || 0;
-    });
+    // 특강반은 운영 시작월에만 매출로 집계 (수강료를 그 달에 한 번만 받으므로, 매달 반복 청구되는
+    // 것처럼 잡히지 않게 함)
+    const billingMonth = (c.special && c.specialStart) ? c.specialStart.slice(0, 7) : null;
+    if (!billingMonth || billingMonth === monthKey) {
+      activeStudents.forEach(s => {
+        byTeacher[t].revenue += getTuitionRecord(data, s.id, monthKey).tuition || 0;
+      });
+    }
   });
   return order.map(name => {
     const row = byTeacher[name];
@@ -1753,6 +1766,20 @@ function App() {
   }
 
   useEffect(() => { saveData(data); }, [data]);
+
+  // 특강반은 운영 종료일이 지나면 손대지 않아도 자동으로 보관 처리되어 재원생 수·시간표·
+  // 수납현황에서 빠진다 (기록은 반 관리의 "보관된 반"에서 계속 열람 가능).
+  useEffect(() => {
+    const today = todayStr();
+    const expired = data.classes.some(c => c.special && c.specialEnd && !c.archived && c.specialEnd < today);
+    if (!expired) return;
+    setData(prev => ({
+      ...prev,
+      classes: prev.classes.map(c => (c.special && c.specialEnd && !c.archived && c.specialEnd < today)
+        ? { ...c, archived: true, archivedAt: today }
+        : c),
+    }));
+  }, [data.classes]);
 
   /* ---- 실시간 동기화 (PC ↔ 모바일) ---- */
   const [syncTick, setSyncTick] = useState(0); // 상태 표시 갱신용
@@ -4119,6 +4146,11 @@ function App() {
                   <div>
                     <p className="font-medium text-gray-900">
                       {c.name}
+                      {c.special && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 align-middle font-semibold">
+                          🗓 특강 {c.specialStart || '?'} ~ {c.specialEnd || '?'}
+                        </span>
+                      )}
                       {classCapacityInfo(c).full && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 align-middle font-semibold">정원 마감</span>
                       )}
@@ -6026,6 +6058,9 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
     time: cls.time || '',
     endTime: cls.endTime || '',
     days: cls.days || [],
+    special: cls.special || false,
+    specialStart: cls.specialStart || '',
+    specialEnd: cls.specialEnd || '',
   });
   const [varyByDay, setVaryByDay] = useState(hasVariedTimes(cls));
   const [daySchedule, setDaySchedule] = useState(() => {
@@ -6037,6 +6072,7 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
     return ds;
   });
   const set = k => e => setF(prev => ({ ...prev, [k]: e.target.value }));
+  const setChecked = k => e => setF(prev => ({ ...prev, [k]: e.target.checked }));
   const toggleDay = d => setF(prev => ({
     ...prev,
     days: prev.days.includes(d) ? prev.days.filter(x => x !== d) : [...prev.days, d],
@@ -6101,6 +6137,25 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
           </div>
         )}
       </div>
+      <div className="mt-2.5 pt-2.5 border-t border-dashed border-indigo-200">
+        <label className="text-xs text-gray-700 flex items-center gap-1.5">
+          <input type="checkbox" checked={f.special} onChange={setChecked('special')} />
+          🗓 특강반 (방학특강 등 운영기간이 정해진 일시적인 반)
+        </label>
+        {f.special && (
+          <div className="mt-1.5">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-600">운영기간</span>
+              <input type="date" value={f.specialStart} onChange={set('specialStart')} className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white" />
+              <span className="text-gray-400">~</span>
+              <input type="date" value={f.specialEnd} onChange={set('specialEnd')} className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white" />
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">
+              운영 종료일이 지나면 이 반은 자동으로 보관 처리되어 재원생 수·시간표·수납현황에서 빠지고(반 관리 하단 "보관된 반"에서 계속 열람 가능), 수강료는 운영 시작일이 속한 달에만 수납현황에 표시됩니다.
+            </p>
+          </div>
+        )}
+      </div>
       <p className="text-xs text-gray-400 mt-2">정원을 입력하면 재원생(퇴소생 제외)이 정원에 찼을 때 "정원 마감"이 자동 표시되고, 퇴소생이 생기면 자동으로 풀립니다. 담당 선생님 변경은 경영지표·업무일지에 바로 반영돼요.</p>
       <div className="flex gap-2 mt-3">
         <button
@@ -6120,6 +6175,7 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
               capacity: f.capacity === '' ? '' : Math.max(0, parseInt(f.capacity, 10) || 0),
               time: f.time, endTime: f.endTime, days: f.days,
               daySchedule: finalDaySchedule,
+              special: f.special, specialStart: f.special ? f.specialStart : '', specialEnd: f.special ? f.specialEnd : '',
             });
           }}
           className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">저장</button>

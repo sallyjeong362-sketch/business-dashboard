@@ -4938,6 +4938,16 @@ function App() {
                               onChange={e => updateVocabTestById(t.id, { retestDate: e.target.value })}
                               className="border border-gray-300 rounded-lg px-2 py-1 text-xs" />
                           </label>
+                          <button onClick={() => updateVocabTestById(t.id, { retest: 'done' })}
+                            title="실제로 재시험을 봐서 끝난 경우"
+                            className="text-[11px] px-2 py-1 rounded-lg border border-green-300 text-green-700 hover:bg-green-50">
+                            재시험 완료
+                          </button>
+                          <button onClick={() => updateVocabTestById(t.id, { retest: null, retestDate: '' })}
+                            title="이 목록에서 그냥 지우고 싶을 때"
+                            className="text-[11px] px-2 py-1 rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50">
+                            목록에서 삭제
+                          </button>
                         </div>
                       ))}
                     </div>

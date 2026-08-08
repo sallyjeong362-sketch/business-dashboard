@@ -555,7 +555,7 @@ function buildDailyReportVars(data, student, dateStr) {
     if (!v) return null;
     const shortName = tt === '문법 복습시험' ? '문법시험' : tt;
     let part = `${shortName} ${(VOCAB_RESULT_META[v.result] || VOCAB_RESULT_META.fail).label}`;
-    if (v.result !== 'absent' && v.wrongCount) part += ` (${v.wrongCount}개 틀림)`;
+    if (v.result !== 'absent' && v.result !== 'skipped' && v.wrongCount) part += ` (${v.wrongCount}개 틀림)`;
     if (v.retest === 'needed') part += ' · 재시험 필요';
     else if (v.retest === 'done') part += ' · 재시험 완료';
     return part;
@@ -868,10 +868,11 @@ function buildPeriodTestSummary(data, studentId, startDate, endDate) {
     if (v.studentId !== studentId || !v.result) return;
     if (v.date < startDate || v.date > endDate) return;
     const name = v.testType === '문법 복습시험' ? '문법시험' : v.testType;
-    if (!stats[name]) { stats[name] = { pass: 0, fail: 0, absent: 0, retest: 0 }; order.push(name); }
+    if (!stats[name]) { stats[name] = { pass: 0, fail: 0, absent: 0, skipped: 0, retest: 0 }; order.push(name); }
     if (v.result === 'pass') stats[name].pass++;
     else if (v.result === 'fail') stats[name].fail++;
     else if (v.result === 'absent') stats[name].absent++;
+    else if (v.result === 'skipped') stats[name].skipped++;
     if (v.retest === 'needed') stats[name].retest++;
   });
   const parts = order.map(name => {
@@ -879,7 +880,8 @@ function buildPeriodTestSummary(data, studentId, startDate, endDate) {
     const bits = [];
     if (s.pass) bits.push(`합격 ${s.pass}회`);
     if (s.fail) bits.push(`불합격 ${s.fail}회`);
-    if (s.absent) bits.push(`미응시 ${s.absent}회`);
+    if (s.absent) bits.push(`결석 ${s.absent}회`);
+    if (s.skipped) bits.push(`미응시 ${s.skipped}회`);
     let out = `${name} ${bits.join('·')}`;
     if (s.retest) out += ` (재시험 필요 ${s.retest}건)`;
     return out;
@@ -1392,11 +1394,14 @@ const RETEST_STATUS = {
   needed: { label: '재시험 필요', color: 'bg-yellow-50 text-yellow-700' },
   done: { label: '재시험 완료', color: 'bg-green-50 text-green-700' },
 };
-// 시험 결과 표시: 결석(absent)은 응시 자체를 못 한 경우로 합/불과 구분해 기록
+// 시험 결과 표시: 결석(absent, 수업에 안 옴)과 미응시(skipped, 출석은 했지만 시험을 못 봄)를
+// 구분해 기록한다. 둘 다 응시 자체를 못 한 경우라 합/불과는 구분하지만, 미응시는(출석했으므로)
+// 결석과 달리 재시험 필요/완료·재시험 예정일을 지정할 수 있다.
 const VOCAB_RESULT_META = {
   pass: { label: '합격', cls: 'bg-green-100 text-green-700' },
   fail: { label: '불합격', cls: 'bg-red-100 text-red-700' },
-  absent: { label: '결석 (미응시)', cls: 'bg-gray-200 text-gray-600' },
+  absent: { label: '결석', cls: 'bg-gray-200 text-gray-600' },
+  skipped: { label: '미응시', cls: 'bg-orange-100 text-orange-700' },
 };
 
 function parseRetestPrompt(current) {
@@ -4786,9 +4791,17 @@ function App() {
                                   <button
                                     onClick={() => setVocabTest(s.id, testType, v.result === 'absent'
                                       ? { result: null }
-                                      : { result: 'absent', wrongCount: 0, retest: null })}
+                                      : { result: 'absent', wrongCount: 0, retest: null, retestDate: '' })}
                                     className={`text-xs px-2.5 py-1 rounded-full border ${v.result==='absent' ? 'bg-gray-200 text-gray-700 border-gray-400 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
-                                    결석 (미응시)
+                                    결석
+                                  </button>
+                                  <button
+                                    onClick={() => setVocabTest(s.id, testType, v.result === 'skipped'
+                                      ? { result: null, retest: null, retestDate: '' }
+                                      : { result: 'skipped', wrongCount: 0 })}
+                                    title="출석은 했지만 시험을 못 본 경우"
+                                    className={`text-xs px-2.5 py-1 rounded-full border ${v.result==='skipped' ? 'bg-orange-100 text-orange-700 border-orange-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                                    미응시 (출석)
                                   </button>
                                 </div>
                               </div>
@@ -4807,7 +4820,7 @@ function App() {
                                   개
                                 </label>
                               )}
-                              {v.result === 'fail' && (
+                              {(v.result === 'fail' || v.result === 'skipped') && (
                                 <div className="flex gap-1.5 flex-wrap items-center">
                                   <button
                                     onClick={() => setVocabTest(s.id, testType, v.retest === 'needed' ? { retest: null, retestDate: '' } : { retest: 'needed' })}
@@ -4940,9 +4953,9 @@ function App() {
                         </div>
                       </div>
                       <p className="text-sm text-gray-600 mt-1">
-                        {v.result === 'absent' ? '결석으로 시험을 보지 못했습니다' : `틀린 개수: ${v.wrongCount}개`}{v.comment ? ` · ${v.comment}` : ''}
+                        {v.result === 'absent' ? '결석으로 시험을 보지 못했습니다' : v.result === 'skipped' ? '출석했으나 시험은 보지 못했습니다' : `틀린 개수: ${v.wrongCount}개`}{v.comment ? ` · ${v.comment}` : ''}
                       </p>
-                      {v.testType === '문법 복습시험' && v.result !== 'absent' && (
+                      {v.testType === '문법 복습시험' && v.result !== 'absent' && v.result !== 'skipped' && (
                         <div className="mt-1.5">
                           <GradedPaperPhoto
                             photo={v.photo}

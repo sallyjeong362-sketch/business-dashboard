@@ -1978,6 +1978,21 @@ function App() {
       if (!next.attendance[date][classId]) next.attendance[date][classId] = {};
       const current = getAttendanceEntry(next, date, classId, studentId) || { status: null, homework: false };
       next.attendance[date][classId][studentId] = { ...current, ...patch };
+      // 결석 체크 시 그날 단어/문법시험도 함께 결석으로 표시 — 출결·시험 탭 양쪽에서
+      // 따로따로 결석 체크하지 않아도 되도록
+      if (patch.status === 'absent') {
+        VOCAB_TEST_TYPES.forEach(testType => {
+          let v = next.vocabTests.find(x => x.studentId === studentId && x.date === date && x.testType === testType);
+          if (!v) {
+            v = { id: 'vt' + Date.now() + Math.floor(Math.random() * 1000) + '_' + testType, studentId, testType, date, result: null, wrongCount: 0, retest: null, comment: '', photo: null };
+            next.vocabTests.push(v);
+          }
+          v.result = 'absent';
+          v.wrongCount = 0;
+          v.retest = null;
+          v.retestDate = '';
+        });
+      }
       return next;
     });
   }

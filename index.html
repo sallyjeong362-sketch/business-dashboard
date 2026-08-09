@@ -2824,7 +2824,7 @@ function App() {
       setReportSendError('학부모 연락처가 등록되어 있지 않습니다. 반 관리 탭에서 먼저 등록해주세요.');
       return;
     }
-    /* 카카오 승인 템플릿(Weekly Report 상세) 문구와 동일해야 발송됩니다 */
+    /* 카카오 승인 템플릿(단어/문법시험 결과 포함된 새 버전) 문구와 동일해야 발송됩니다 */
     const preview =
       `Weekly Report\n` +
       `안녕하세요? ${reportData.student.name} 학부모님.\n` +
@@ -2833,6 +2833,7 @@ function App() {
       `■ 기간: ${reportData.startDate} ~ ${reportData.endDate}\n` +
       `■ 출석률: ${reportData.attendanceRate !== null ? reportData.attendanceRate + '%' : '기록없음'}\n` +
       `■ 숙제 제출률: ${reportData.homeworkRate !== null ? reportData.homeworkRate + '%' : '기록없음'}\n` +
+      `■ 단어/문법시험: ${buildPeriodTestSummary(data, reportData.student.id, reportData.startDate, reportData.endDate) || '시험 없음'}\n` +
       `■ 최근 시험 점수: ${reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음'}\n` +
       `■ 강사 코멘트: ${comment || '-'}\n\n` +
       `궁금하신 점은 학원으로 문의해 주세요.`;

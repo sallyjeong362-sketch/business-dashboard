@@ -540,8 +540,9 @@ const HW_META = {
   none: { label: '숙제 없음', cls: 'bg-blue-100 text-blue-700' },
 };
 
-/* 데일리 리포트: 특정 날짜의 출결·수업 진도·숙제·시험 결과와
-   최근 30일 숙제 이행률을 알림톡 변수로 구성 */
+/* 데일리 리포트: 특정 날짜의 출결·수업 진도·숙제·시험 결과를 알림톡 변수로 구성.
+   숙제 이행률은 그날 하루 기준(했으면 100%, 안 했으면 0%) — 위클리·먼슬리처럼
+   기간을 누적하는 게 아니라 "오늘" 리포트이므로 그날의 결과만 반영한다. */
 function buildDailyReportVars(data, student, dateStr) {
   const entry = getAttendanceEntry(data, dateStr, student.classId, student.id);
   const attendance = entry && entry.status && STATUS[entry.status] ? STATUS[entry.status].label : '기록 없음';
@@ -563,17 +564,8 @@ function buildDailyReportVars(data, student, dateStr) {
     return part;
   }).filter(Boolean);
   const test = testParts.length ? testParts.join(' / ') : '시험 없음';
-  // 최근 30일(해당 날짜 포함) 숙제 이행률 — 미확인 포함, 완료만 제출로 인정
-  let total = 0, done = 0;
-  const end = new Date(dateStr + 'T00:00:00');
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(end);
-    d.setDate(d.getDate() - i);
-    const ds = new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    const h = normalizeHomework(getAttendanceEntry(data, ds, student.classId, student.id));
-    if (h) { total++; if (h === 'done' || h === 'none') done++; }
-  }
-  const hwRate = total ? Math.round((done / total) * 100) + '%' : '기록 없음';
+  // 그날 하루의 숙제 이행 여부만 반영 (완료·숙제없음 = 100%, 미완·미확인 = 0%)
+  const hwRate = hw ? ((hw === 'done' || hw === 'none') ? '100%' : '0%') : '기록 없음';
   const [, m, dd] = dateStr.split('-');
   const dateLabel = `${parseInt(m, 10)}월 ${parseInt(dd, 10)}일`;
   return { attendance, lesson, homework, test, hwRate, dateLabel };

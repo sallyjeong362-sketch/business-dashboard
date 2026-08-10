@@ -488,8 +488,9 @@ function getAttendanceEntry(data, date, classId, studentId) {
 function normalizeHomework(entry) {
   if (!entry) return null;
   if (entry.homework === true) return 'done';
-  // unchecked: 결석 등으로 숙제 검사를 하지 못한 상태 (이행률 계산에서 제외)
-  if (entry.homework === 'done' || entry.homework === 'missing' || entry.homework === 'unchecked') return entry.homework;
+  // none: 그날 애초에 내준 숙제가 없었던 경우 — 이행률 계산에서는 완료와 동일하게 취급해
+  // (숙제가 없었으니 못 해온 것으로 깎이지 않도록) 제출률에 불이익이 없게 한다.
+  if (entry.homework === 'done' || entry.homework === 'missing' || entry.homework === 'unchecked' || entry.homework === 'none') return entry.homework;
   return null;
 }
 
@@ -536,6 +537,7 @@ const HW_META = {
   done: { label: '완료', cls: 'bg-green-100 text-green-700' },
   missing: { label: '미완', cls: 'bg-red-100 text-red-700' },
   unchecked: { label: '미확인 (결석)', cls: 'bg-gray-200 text-gray-600' },
+  none: { label: '숙제 없음', cls: 'bg-blue-100 text-blue-700' },
 };
 
 /* 데일리 리포트: 특정 날짜의 출결·수업 진도·숙제·시험 결과와
@@ -569,7 +571,7 @@ function buildDailyReportVars(data, student, dateStr) {
     d.setDate(d.getDate() - i);
     const ds = new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const h = normalizeHomework(getAttendanceEntry(data, ds, student.classId, student.id));
-    if (h) { total++; if (h === 'done') done++; }
+    if (h) { total++; if (h === 'done' || h === 'none') done++; }
   }
   const hwRate = total ? Math.round((done / total) * 100) + '%' : '기록 없음';
   const [, m, dd] = dateStr.split('-');
@@ -911,7 +913,7 @@ function buildMonthlyReportInfo(data, student, monthKey) {
       if (counts[entry.status] !== undefined) counts[entry.status]++;
       if (entry.status === 'present' || entry.status === 'late') presentish++;
       const hw = normalizeHomework(entry);
-      if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
+      if (hw) { hwTotal++; if (hw === 'done' || hw === 'none') hwDone++; }
     }
   }
   const attendanceRate = attTotal ? Math.round((presentish / attTotal) * 100) + '%' : '기록 없음';
@@ -3272,8 +3274,9 @@ function App() {
         if (entry.status === 'present' || entry.status === 'late') presentCount++;
         const hw = normalizeHomework(entry);
         // 미확인(unchecked, 결석 등)도 이행률 분모에 포함 — 완료만 제출로 인정해
-        // 결석으로 검사받지 못한 날도 제출률이 깎이게 한다 (학부모 경각심 목적)
-        if (hw) { hwTotal++; if (hw === 'done') hwDone++; }
+        // 결석으로 검사받지 못한 날도 제출률이 깎이게 한다 (학부모 경각심 목적).
+        // 다만 '숙제 없음'(그날 애초에 숙제가 없었던 경우)은 완료와 동일하게 인정한다.
+        if (hw) { hwTotal++; if (hw === 'done' || hw === 'none') hwDone++; }
         attendanceDetails.push({
           date: d, status: entry.status, note: entry.note || '', hw, hwNote: entry.homeworkNote || '',
           attitude: entry.attitude || '', lesson: getLessonLog(data, d, student.classId),
@@ -3864,6 +3867,12 @@ function App() {
                             onClick={() => setAttendance(selectedClassId, s.id, { homework: hwStatus === 'missing' ? null : 'missing' })}
                             className={`text-xs px-2.5 py-1 rounded-full border ${hwStatus==='missing' ? 'bg-red-100 text-red-700 border-red-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
                             숙제 미완
+                          </button>
+                          <button
+                            onClick={() => setAttendance(selectedClassId, s.id, { homework: hwStatus === 'none' ? null : 'none' })}
+                            title="그날 애초에 숙제가 없었던 경우 — 이행률 계산 시 완료와 동일하게 인정됩니다"
+                            className={`text-xs px-2.5 py-1 rounded-full border ${hwStatus==='none' ? 'bg-blue-100 text-blue-700 border-blue-300 font-medium' : 'bg-white text-gray-400 border-gray-200'}`}>
+                            숙제 없음
                           </button>
                         </div>
                         {entry.status && entry.status !== 'present' && (

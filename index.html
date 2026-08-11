@@ -2111,6 +2111,15 @@ function App() {
     const key = (oldName || '').trim();
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
+      // 반 이동(체크 해제 + 다른 반 체크) 시에도 같은 학생의 id를 그대로 이어서 써서
+      // 출결·시험·수납 기록이 새 반에서도 끊기지 않게 한다. 이미 여러 반에 동시에
+      // 속해 있던 경우(특강반 등)까지 id를 섞으면 서로 다른 반 사본끼리 id가 겹치므로,
+      // "이번에 빠지는 반"의 id만 "이번에 새로 추가되는 반"에 순서대로 넘겨 재사용한다.
+      const removedFrom = [];
+      next.classes.forEach(c => {
+        const match = key && c.students.find(s => (s.name || '').trim() === key);
+        if (match && !classIds.includes(c.id)) removedFrom.push({ classId: c.id, id: match.id });
+      });
       next.classes.forEach(c => {
         const has = key && c.students.some(s => (s.name || '').trim() === key);
         const want = classIds.includes(c.id);
@@ -2119,7 +2128,18 @@ function App() {
         } else if (has) {
           c.students.forEach(s => { if ((s.name || '').trim() === key) Object.assign(s, fields); });
         } else if (want) {
-          c.students.push({ id: 's' + Date.now() + Math.random().toString(36).slice(2, 6), ...fields });
+          const reused = removedFrom.shift();
+          const newId = reused ? reused.id : ('s' + Date.now() + Math.random().toString(36).slice(2, 6));
+          c.students.push({ id: newId, ...fields });
+          if (reused) {
+            // 옮겨온 반이 있으면, 그 반에서의 날짜별 출결 기록도 새 반으로 함께 옮긴다.
+            Object.keys(next.attendance || {}).forEach(date => {
+              const entry = next.attendance[date]?.[reused.classId]?.[reused.id];
+              if (!entry) return;
+              if (!next.attendance[date][c.id]) next.attendance[date][c.id] = {};
+              if (!next.attendance[date][c.id][newId]) next.attendance[date][c.id][newId] = entry;
+            });
+          }
         }
       });
       return next;

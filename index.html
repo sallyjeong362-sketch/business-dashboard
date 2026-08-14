@@ -848,13 +848,17 @@ function tomorrowStr() {
   return new Date(d - tz).toISOString().slice(0, 10);
 }
 
-// 재시험 예정일을 오늘·내일로 미뤄둔 학생만 안내 발송 대상으로 추린다 — 결제 예정 안내와
-// 같은 방식으로, 아직 날짜가 임박하지 않은 재시험까지 미리 알리지 않기 위함.
+// 재시험 안내 발송 대상: 예정일이 아직 임박하지 않은 재시험까지 미리 알리지 않도록
+// 오늘·내일 예정인 것만 우선 포함하고, 예정일이 지났는데도(연락 없이 안 왔다가는 등)
+// 여전히 '재시험 필요'로 남아있는 건 다음 수업 전까지 계속 재안내할 수 있게 포함한다.
 function dueSoonRetests(data) {
-  const todayD = todayStr();
   const tomorrowD = tomorrowStr();
   return pendingRetests(data)
-    .map(p => ({ student: p.student, tests: p.tests.filter(t => t.retestDate === todayD || t.retestDate === tomorrowD) }))
+    .map(p => ({
+      student: p.student,
+      tests: p.tests.filter(t => t.retestDate && t.retestDate <= tomorrowD)
+        .map(t => ({ ...t, overdue: t.retestDate < todayStr() })),
+    }))
     .filter(p => p.tests.length > 0);
 }
 
@@ -2632,8 +2636,8 @@ function App() {
     });
   }
 
-  /* 재시험 안내: 재시험 예정일이 오늘·내일인 학생만 대상으로 하는 개인화 발송.
-     결제 예정 안내와 같은 방식으로, 날짜가 임박한 학생에게만 보낸다. */
+  /* 재시험 안내: 재시험 예정일이 오늘·내일이거나, 예정일이 지났는데도 여전히
+     '재시험 필요'로 남아있는(연락 없이 안 온 등) 학생을 대상으로 하는 개인화 발송. */
   function sendRetestNoticeTo(recips) {
     if (!recips.length) { setRetestNoticeError('선택된 학부모가 없습니다.'); return; }
     setRetestNoticePending(true);
@@ -2665,13 +2669,13 @@ function App() {
         }
       });
     });
-    if (!recips.length) { setRetestNoticeError('오늘·내일 재시험 예정인 학생의 학부모·학생 연락처가 없습니다.'); return; }
+    if (!recips.length) { setRetestNoticeError('안내 대상(오늘·내일 예정 또는 기한이 지난 재시험) 학생의 학부모·학생 연락처가 없습니다.'); return; }
     const init = {};
     recips.forEach(r => { init[r.phone] = true; });
     setAlimtalkChecked(init);
     const first = recips[0];
     setAlimtalkConfirm({
-      title: '재시험 안내 (오늘·내일 예정)',
+      title: '재시험 안내 (오늘·내일 예정 · 기한 초과 포함)',
       recipients: recips.map(r => ({ name: r.name, phone: r.phone })),
       selectable: true,
       previewText: `안녕하세요. ${data.academyName}입니다.\n${first.studentName} 학생의 재시험 일정을 안내드립니다.\n\n■ 재시험 예정: ${first.retestInfo}\n\n준비해서 올 수 있도록 확인 부탁드립니다.\n궁금하신 점은 학원으로 문의해 주세요.`,
@@ -4922,7 +4926,7 @@ function App() {
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
                   <p className="text-sm font-medium text-yellow-800">
-                    ⚠ 재시험 필요 {pending.length}명{dueSoon.length > 0 ? ` · 오늘·내일 예정 ${dueSoon.length}명` : ''}
+                    ⚠ 재시험 필요 {pending.length}명{dueSoon.length > 0 ? ` · 안내 발송 대상 ${dueSoon.length}명` : ''}
                   </p>
                   <button onClick={openRetestNoticeConfirm} disabled={retestNoticePending || dueSoon.length === 0}
                     className="text-xs px-3 py-1.5 rounded-lg bg-yellow-600 text-white disabled:opacity-50">
@@ -4936,6 +4940,9 @@ function App() {
                       {p.tests.map(t => (
                         <div key={t.id} className="flex items-center gap-2 flex-wrap text-gray-600 mb-1 last:mb-0">
                           <span>{t.testType} ({mdLabel(t.date)})</span>
+                          {t.retestDate && t.retestDate < todayStr() && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">기한 지남 · 재안내 가능</span>
+                          )}
                           <label className="flex items-center gap-1 text-gray-500">
                             재시험 예정일
                             <input type="date" value={t.retestDate}
@@ -4958,7 +4965,7 @@ function App() {
                   ))}
                 </div>
                 {dueSoon.length === 0 && (
-                  <p className="text-[11px] text-yellow-700 mt-2">재시험 예정일을 오늘·내일로 입력해야 안내를 보낼 수 있어요.</p>
+                  <p className="text-[11px] text-yellow-700 mt-2">재시험 예정일을 입력하면 안내를 보낼 수 있어요. 예정일이 지나도(학생이 안 온 경우 등) 다음 수업 전까지 계속 재안내할 수 있어요.</p>
                 )}
                 {retestNoticeError && <p className="text-xs text-red-500 mt-2">{retestNoticeError}</p>}
                 {retestNoticeFlash && <p className="text-xs text-green-600 mt-2">{retestNoticeFlash}</p>}

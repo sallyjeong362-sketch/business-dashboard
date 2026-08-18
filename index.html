@@ -3647,15 +3647,18 @@ function App() {
             </button>
           )}
           {allStudents(data).length === 0 && <EmptyState text="등록된 학생이 없습니다. 위의 새 학생 등록으로 추가해주세요." />}
-          <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {groupStudentsByName(
-              allStudents(data).slice().sort(studentSortComparator(directorySort))
-            ).map(g => {
+          {(() => {
+            const sortedGroups = groupStudentsByName(allStudents(data).slice().sort(studentSortComparator(directorySort)));
+            const activeGroups = sortedGroups.filter(g => !g.entries[0].withdrawDate);
+            const withdrawnGroups = sortedGroups.filter(g => g.entries[0].withdrawDate);
+            const renderRow = (g, num) => {
               const s = g.entries[0];
               return (
                 <div key={g.name} className="px-4 py-3">
                   <div className="flex items-center justify-between text-sm flex-wrap gap-2">
-                    <div>
+                    <div className="flex items-start gap-2">
+                      {num !== null && <span className="text-xs text-gray-400 tabular-nums mt-0.5 w-5 shrink-0 text-right">{num}</span>}
+                      <div>
                       <span className={`font-medium ${s.withdrawDate || s.onHold || g.entries.every(e => e.classArchived) ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{g.name}</span>
                       {g.entries.map(e => (
                         <span key={e.id} className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full align-middle ${e.classArchived ? 'bg-gray-200 text-gray-500' : 'bg-indigo-50 text-indigo-700'}`}>
@@ -3676,6 +3679,7 @@ function App() {
                       <p className="text-xs text-gray-500 mt-0.5">
                         {[s.grade, s.school, s.parentPhone].filter(Boolean).join(' · ')}
                       </p>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {directoryFormFor === g.name ? (
@@ -3698,8 +3702,23 @@ function App() {
                   )}
                 </div>
               );
-            })}
-          </div>
+            };
+            return (
+              <>
+                <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
+                  {activeGroups.map((g, i) => renderRow(g, i + 1))}
+                </div>
+                {withdrawnGroups.length > 0 && (
+                  <div>
+                    <p className="text-xs text-gray-500 pt-3 pb-1">퇴소 학생 {withdrawnGroups.length}명</p>
+                    <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
+                      {withdrawnGroups.map(g => renderRow(g, null))}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 

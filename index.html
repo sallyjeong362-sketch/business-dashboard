@@ -2222,14 +2222,14 @@ function App() {
     }));
   }
 
-  function sendNoticeAlimtalk(id) {
+  function sendNoticeAlimtalk(id, phones) {
     const a = data.announcements.find(a => a.id === id);
     if (!a) return;
     if (a.target !== '학부모' && a.target !== '전체') {
       setNoticeSendError(prev => ({ ...prev, [id]: '학부모 또는 전체 대상 공지만 알림톡으로 발송할 수 있습니다.' }));
       return;
     }
-    const phones = [...new Set(allStudents(data).filter(s => isActiveStudent(s, todayStr())).map(s => s.parentPhone).filter(Boolean))];
+    if (!phones) phones = [...new Set(allStudents(data).filter(s => isActiveStudent(s, todayStr())).map(s => s.parentPhone).filter(Boolean))];
     if (!phones.length) {
       setNoticeSendError(prev => ({ ...prev, [id]: '등록된 학부모 연락처가 없습니다.' }));
       return;
@@ -2882,11 +2882,16 @@ function App() {
       setNoticeSendError(prev => ({ ...prev, [id]: '등록된 학부모 연락처가 없습니다.' }));
       return;
     }
+    const init = {};
+    recips.forEach(r => { init[r.phone] = true; });
+    setAlimtalkChecked(init);
     setAlimtalkConfirm({
       title: '공지 — ' + a.title,
       recipients: recips,
+      selectable: true,
       previewText: `안녕하세요. ${data.academyName}입니다.\n재원생 학부모님께 학원 수업·일정 관련 안내 말씀드립니다.\n\n■ 안내: ${a.title}\n■ 내용: ${a.content}\n■ 안내일: ${a.date}\n\n본 안내는 수신 동의하신 재원생 학부모님께 발송됩니다.\n궁금하신 점은 학원으로 문의해 주세요.`,
-      doSend: () => sendNoticeAlimtalk(id),
+      previewNote: '보내지 않을 학부모는 위 목록에서 체크를 해제해주세요.',
+      doSend: phones => sendNoticeAlimtalk(id, phones),
     });
   }
 

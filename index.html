@@ -977,6 +977,39 @@ function groupStudentsByName(students) {
   return list;
 }
 
+// 월별 등록/퇴소/재원생 추이: 같은 이름(=같은 학생)당 대표 정보 하나(첫 사본)로 판단한다.
+// 등록·퇴소는 그 달에 등록일/퇴소일이 있는 학생 수, 재원생 수는 그 달 말일 기준 스냅샷.
+function monthlyStudentStats(data) {
+  const students = groupStudentsByName(allStudents(data)).map(g => g.entries[0]);
+  const months = new Set();
+  students.forEach(s => {
+    if (s.enrollDate) months.add(s.enrollDate.slice(0, 7));
+    if (s.withdrawDate) months.add(s.withdrawDate.slice(0, 7));
+  });
+  if (!months.size) return [];
+  const sortedMonths = [...months].sort();
+  let [y, m] = sortedMonths[0].split('-').map(Number);
+  const todayMonth = todayStr().slice(0, 7);
+  const lastMonth = sortedMonths[sortedMonths.length - 1] > todayMonth ? sortedMonths[sortedMonths.length - 1] : todayMonth;
+  const [maxY, maxM] = lastMonth.split('-').map(Number);
+  const all = [];
+  while (y < maxY || (y === maxY && m <= maxM)) {
+    all.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return all.map(monthKey => {
+    const monthEnd = monthKey + '-31';
+    const enrolled = students.filter(s => s.enrollDate && s.enrollDate.slice(0, 7) === monthKey).length;
+    const withdrawn = students.filter(s => s.withdrawDate && s.withdrawDate.slice(0, 7) === monthKey).length;
+    const active = students.filter(s => {
+      const enrolledByThen = !s.enrollDate || s.enrollDate <= monthEnd;
+      const notYetWithdrawn = !s.withdrawDate || s.withdrawDate > monthEnd;
+      return enrolledByThen && notYetWithdrawn;
+    }).length;
+    return { monthKey, enrolled, withdrawn, active };
+  });
+}
+
 // 결제일 값을 어떤 형태("5", "5일", 5, " 5 ")로 저장돼 있어도 숫자(1~31) 또는 ''로 통일
 function normalizeDueDay(v) {
   if (v === null || v === undefined || v === '') return '';
@@ -1549,6 +1582,7 @@ function App() {
   const [bookFeeClassAmount, setBookFeeClassAmount] = useState('');
   const [bookFeeBulkFlash, setBookFeeBulkFlash] = useState('');
   const [directorySort, setDirectorySort] = useState('name_asc');
+  const [showMonthlyStats, setShowMonthlyStats] = useState(false);
   const [manageSort, setManageSort] = useState('name_asc');
   const [paymentSort, setPaymentSort] = useState('name_asc');
   const [metricsMonth, setMetricsMonth] = useState(currentMonthKey());
@@ -3616,6 +3650,40 @@ function App() {
               })()}
               tone="bg-indigo-50 text-indigo-700"
             />
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <button onClick={() => setShowMonthlyStats(v => !v)} className="text-sm text-indigo-600 hover:underline">
+              {showMonthlyStats ? '▾' : '▸'} 월별 등록·퇴소·재원생 현황 {showMonthlyStats ? '접기' : '보기'}
+            </button>
+            {showMonthlyStats && (() => {
+              const rows = monthlyStudentStats(data).slice().reverse();
+              return rows.length === 0 ? (
+                <p className="text-xs text-gray-400 mt-2">등록일·퇴소일이 입력된 학생이 없어 월별 현황을 계산할 수 없습니다.</p>
+              ) : (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead>
+                      <tr className="text-xs text-gray-500 border-b border-gray-200">
+                        <th className="py-1.5 pr-3 font-medium">월</th>
+                        <th className="py-1.5 pr-3 font-medium">등록</th>
+                        <th className="py-1.5 pr-3 font-medium">퇴소</th>
+                        <th className="py-1.5 pr-3 font-medium">재원생(월말 기준)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map(r => (
+                        <tr key={r.monthKey} className="border-b border-gray-100 last:border-0">
+                          <td className="py-1.5 pr-3 text-gray-700">{r.monthKey}</td>
+                          <td className="py-1.5 pr-3 text-green-700">{r.enrolled > 0 ? `+${r.enrolled}명` : '-'}</td>
+                          <td className="py-1.5 pr-3 text-red-600">{r.withdrawn > 0 ? `-${r.withdrawn}명` : '-'}</td>
+                          <td className="py-1.5 pr-3 text-gray-900 font-medium">{r.active}명</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-sm text-gray-600 mb-2">

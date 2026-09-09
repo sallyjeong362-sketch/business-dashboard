@@ -1385,7 +1385,7 @@ const TEACHER_LABOR_TARGET = 40; // 매출 대비 인건비 적정 상한(%)
 function computeTeacherMetrics(data, monthKey) {
   const byTeacher = {};
   const order = [];
-  data.classes.forEach(c => {
+  data.classes.filter(c => !c.archived).forEach(c => {
     const t = (c.teacher || '').trim() || '담당 미지정';
     if (!byTeacher[t]) {
       byTeacher[t] = { teacher: t, classNames: [], studentCount: 0, revenue: 0 };
@@ -1417,6 +1417,20 @@ function computeTeacherMetrics(data, monthKey) {
     }
     return { ...row, salary, laborRate, avgTuition, neededStudents };
   });
+}
+
+// 반별 매출액(청구 기준, 수납 여부 무관): 선생님별 매출과 같은 로직을 반 단위로 계산.
+// 보관된 반은 더 이상 운영 중이 아니므로 제외한다.
+function computeClassMetrics(data, monthKey) {
+  return data.classes.filter(c => !c.archived).map(c => {
+    const activeStudents = c.students.filter(s => isActiveInMonth(s, monthKey));
+    const billingMonth = (c.special && c.specialStart) ? c.specialStart.slice(0, 7) : null;
+    let revenue = 0;
+    if (!billingMonth || billingMonth === monthKey) {
+      activeStudents.forEach(s => { revenue += getTuitionRecord(data, s.id, monthKey).tuition || 0; });
+    }
+    return { classId: c.id, className: c.name, teacher: (c.teacher || '').trim() || '담당 미지정', studentCount: activeStudents.length, revenue };
+  }).sort((a, b) => b.revenue - a.revenue);
 }
 
 function promoteGradesInData(data) {
@@ -5473,6 +5487,25 @@ function App() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-sm font-semibold text-gray-700 mb-1">📚 반별 매출액</p>
+              <p className="text-xs text-gray-400 mb-3">반별 학생 수업료 <strong>청구액(실제 수납 여부와 무관한 매출)</strong> 기준입니다. 매출액이 높은 순으로 정렬됩니다.</p>
+              <div className="divide-y divide-gray-100">
+                {computeClassMetrics(data, metricsMonth).map(c => (
+                  <div key={c.classId} className="py-2 flex items-center justify-between flex-wrap gap-1.5">
+                    <div>
+                      <span className="text-sm font-medium text-gray-800">{c.className}</span>
+                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 align-middle">{c.teacher}</span>
+                    </div>
+                    <span className="text-xs text-gray-500">학생 {c.studentCount}명 · 매출 {c.revenue.toLocaleString()}원</span>
+                  </div>
+                ))}
+                {computeClassMetrics(data, metricsMonth).length === 0 && (
+                  <p className="text-xs text-gray-400 py-2">등록된 반이 없습니다.</p>
+                )}
               </div>
             </div>
 

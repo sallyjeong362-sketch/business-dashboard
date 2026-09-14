@@ -1391,7 +1391,10 @@ function computeTeacherMetrics(data, monthKey) {
       order.push(t);
     }
     byTeacher[t].classNames.push(c.name);
-    const activeStudents = c.students.filter(s => isActiveInMonth(s, monthKey));
+    // 이번 달(또는 미래 달)을 보는 중이면 "지금 재원 중인지"로 판단해 이미 퇴소한 학생은
+    // 바로 매출·인원에서 빠지고(수납현황과 동일한 기준), 지난 달을 조회할 때는 그 달에
+    // 실제 재원했던 그대로 보여준다.
+    const activeStudents = c.students.filter(s => isActiveForPaymentView(s, monthKey));
     byTeacher[t].studentCount += activeStudents.length;
     // 특강반은 운영 시작월에만 매출로 집계 (수강료를 그 달에 한 번만 받으므로, 매달 반복 청구되는
     // 것처럼 잡히지 않게 함)
@@ -1422,7 +1425,7 @@ function computeTeacherMetrics(data, monthKey) {
 // 보관된 반은 더 이상 운영 중이 아니므로 제외한다.
 function computeClassMetrics(data, monthKey) {
   return data.classes.filter(c => !c.archived).map(c => {
-    const activeStudents = c.students.filter(s => isActiveInMonth(s, monthKey));
+    const activeStudents = c.students.filter(s => isActiveForPaymentView(s, monthKey));
     const billingMonth = (c.special && c.specialStart) ? c.specialStart.slice(0, 7) : null;
     let revenue = 0;
     if (!billingMonth || billingMonth === monthKey) {

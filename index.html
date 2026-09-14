@@ -2830,14 +2830,20 @@ function App() {
     const seen = {};
     const recips = [];
     cls.students.filter(st => isActiveStudent(st, dailyReportDate)).forEach(st => {
-      if (!st.parentPhone || seen[st.parentPhone]) return;
-      seen[st.parentPhone] = true;
       const student = { ...st, classId: cls.id, className: cls.name };
-      recips.push({ name: `${st.name} 학부모`, phone: st.parentPhone, student, vars: buildDailyReportVars(data, student, dailyReportDate) });
+      const vars = buildDailyReportVars(data, student, dailyReportDate);
+      if (st.parentPhone && !seen[st.parentPhone]) {
+        seen[st.parentPhone] = true;
+        recips.push({ name: `${st.name} 학부모`, phone: st.parentPhone, student, vars });
+      }
+      if (st.studentPhone && !seen[st.studentPhone]) {
+        seen[st.studentPhone] = true;
+        recips.push({ name: `${st.name} 학생`, phone: st.studentPhone, student, vars });
+      }
     });
-    if (!recips.length) { setReportSendError(`${cls.name}에 학부모 연락처가 등록된 학생이 없습니다.`); return; }
+    if (!recips.length) { setReportSendError(`${cls.name}에 학부모/학생 연락처가 등록된 학생이 없습니다.`); return; }
     const init = {};
-    recips.forEach(r => { init[r.phone] = true; });
+    recips.forEach(r => { init[r.phone] = !r.name.endsWith(' 학생'); }); // 기본은 학부모만 체크, 학생은 필요할 때 추가로 체크
     setAlimtalkChecked(init);
     const first = recips[0];
     setAlimtalkConfirm({

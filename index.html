@@ -2885,10 +2885,18 @@ function App() {
 
   function openReportAlimtalkConfirm() {
     if (!reportData) return;
-    if (!reportData.student.parentPhone) {
-      setReportSendError('학부모 연락처가 등록되어 있지 않습니다. 반 관리 탭에서 먼저 등록해주세요.');
+    if (!reportData.student.parentPhone && !reportData.student.studentPhone) {
+      setReportSendError('학부모/학생 연락처가 등록되어 있지 않습니다. 반 관리 탭에서 먼저 등록해주세요.');
       return;
     }
+    const recips = [];
+    if (reportData.student.parentPhone) recips.push({ name: reportData.student.name + ' 학부모', phone: reportData.student.parentPhone });
+    if (reportData.student.studentPhone && reportData.student.studentPhone !== reportData.student.parentPhone) {
+      recips.push({ name: reportData.student.name + ' 학생', phone: reportData.student.studentPhone });
+    }
+    const init = {};
+    recips.forEach((r, i) => { init[r.phone] = i === 0; }); // 기본은 학부모만 체크, 학생은 필요할 때 추가로 체크
+    setAlimtalkChecked(init);
     /* 카카오 승인 템플릿(단어/문법시험 결과 포함된 새 버전) 문구와 동일해야 발송됩니다 */
     const preview =
       `Weekly Report\n` +
@@ -2904,9 +2912,11 @@ function App() {
       `궁금하신 점은 학원으로 문의해 주세요.`;
     setAlimtalkConfirm({
       title: reportData.student.name + ' 학습리포트',
-      recipients: [{ name: reportData.student.name + ' 학부모', phone: reportData.student.parentPhone }],
+      recipients: recips,
+      selectable: recips.length > 1,
       previewText: preview,
-      doSend: () => sendReportAlimtalk(),
+      previewNote: recips.length > 1 ? '숙제 등 학생에게도 함께 보내려면 위에서 학생을 체크해주세요.' : undefined,
+      doSend: phones => sendReportAlimtalk(phones),
     });
   }
 
@@ -3435,10 +3445,13 @@ function App() {
     setComment('');
   }
 
-  function sendReportAlimtalk() {
+  function sendReportAlimtalk(phones) {
     if (!reportData) return;
-    if (!reportData.student.parentPhone) {
-      setReportSendError('학부모 연락처가 등록되어 있지 않습니다. 반 관리 탭에서 먼저 등록해주세요.');
+    // 확인 패널에서 체크해 넘어온 번호가 있으면 그대로 쓰고, 없으면(선택 UI 없이 바로 보낸 경우)
+    // 기존처럼 학부모 번호로만 보낸다.
+    const targets = (phones && phones.length ? phones : [reportData.student.parentPhone].filter(Boolean));
+    if (!targets.length) {
+      setReportSendError('학부모/학생 연락처가 등록되어 있지 않습니다. 반 관리 탭에서 먼저 등록해주세요.');
       return;
     }
     setReportSendPending(true);
@@ -3456,12 +3469,14 @@ function App() {
       recentScore: reportData.scores[0] ? reportData.scores[0].score + '점' : '기록없음',
       comment: comment || '-',
     };
-    sendAlimtalk(data.alimtalkProxyUrl, reportData.student.parentPhone, 'report', variables)
+    sendAlimtalk(data.alimtalkProxyUrl, targets, 'report', variables)
       .then(() => {
         setData(prev => {
           const next = JSON.parse(JSON.stringify(prev));
           if (!next.reports[reportData.student.id]) next.reports[reportData.student.id] = [];
-          next.reports[reportData.student.id].push({ date: todayStr(), comment, channel: '카카오 알림톡', phone: reportData.student.parentPhone });
+          targets.forEach(phone => {
+            next.reports[reportData.student.id].push({ date: todayStr(), comment, channel: '카카오 알림톡', phone });
+          });
           return next;
         });
         setComment('');
@@ -4879,9 +4894,9 @@ function App() {
                 </button>
                 <button
                   onClick={openReportAlimtalkConfirm}
-                  disabled={!reportData.student.parentPhone || !data.alimtalkProxyUrl || reportSendPending}
-                  title={!reportData.student.parentPhone ? '학부모 연락처가 없습니다' : (!data.alimtalkProxyUrl ? '관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요' : '')}
-                  className={`flex-1 py-2 text-sm rounded-lg border ${(!reportData.student.parentPhone || !data.alimtalkProxyUrl || reportSendPending) ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                  disabled={(!reportData.student.parentPhone && !reportData.student.studentPhone) || !data.alimtalkProxyUrl || reportSendPending}
+                  title={(!reportData.student.parentPhone && !reportData.student.studentPhone) ? '학부모/학생 연락처가 없습니다' : (!data.alimtalkProxyUrl ? '관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요' : '')}
+                  className={`flex-1 py-2 text-sm rounded-lg border ${((!reportData.student.parentPhone && !reportData.student.studentPhone) || !data.alimtalkProxyUrl || reportSendPending) ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
                 >
                   {reportSendPending ? '발송 중...' : '카카오 알림톡 발송'}
                 </button>

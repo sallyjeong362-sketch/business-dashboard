@@ -1688,6 +1688,7 @@ function App() {
     setTeacherFormFor(null);
   }
   const [paymentViewMonth, setPaymentViewMonth] = useState(null);
+  const [showPaymentMonthlyStats, setShowPaymentMonthlyStats] = useState(false);
   const [openLessonLogClasses, setOpenLessonLogClasses] = useState({});
   const [openLessonLogTeachers, setOpenLessonLogTeachers] = useState({});
   const [editLessonLogFor, setEditLessonLogFor] = useState(null);
@@ -4245,6 +4246,42 @@ function App() {
                   <MetricBox label="수납액" value={viewSummary.totalCollected.toLocaleString() + '원'} />
                   <MetricBox label="매출액" value={viewSummary.totalDue.toLocaleString() + '원'} />
                   <MetricBox label="교재비 수납액" value={viewSummary.bookFeeCollected.toLocaleString() + '원'} />
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+                  <button onClick={() => setShowPaymentMonthlyStats(v => !v)} className="text-sm text-indigo-600 hover:underline">
+                    {showPaymentMonthlyStats ? '▾' : '▸'} 월별 수납·미납 학생 수 {showPaymentMonthlyStats ? '접기' : '보기'}
+                  </button>
+                  {showPaymentMonthlyStats && (
+                    <div className="mt-2 overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead>
+                          <tr className="text-xs text-gray-500 border-b border-gray-200">
+                            <th className="py-1.5 pr-3 font-medium">월</th>
+                            <th className="py-1.5 pr-3 font-medium">수납 학생수</th>
+                            <th className="py-1.5 pr-3 font-medium">미납 학생수</th>
+                            <th className="py-1.5 pr-3 font-medium">전체</th>
+                            <th className="py-1.5 pr-3 font-medium">수납률</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {metricsTrendMonths(paymentMonthKey, 6).map(mk => {
+                            const s = computePaymentSummary(data, mk);
+                            const unpaid = s.total - s.paidCount;
+                            return (
+                              <tr key={mk} className="border-b border-gray-100 last:border-0">
+                                <td className="py-1.5 pr-3 text-gray-700">{monthKeyLabel(mk)}{mk === currentMonthKey() ? ' (이번 달)' : ''}</td>
+                                <td className="py-1.5 pr-3 text-green-700">{s.paidCount}명</td>
+                                <td className="py-1.5 pr-3 text-red-600">{unpaid > 0 ? `${unpaid}명` : '-'}</td>
+                                <td className="py-1.5 pr-3 text-gray-900 font-medium">{s.total}명</td>
+                                <td className="py-1.5 pr-3 text-gray-500">{s.rate}%</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 {!data.paymentGatewayProxyUrl && (

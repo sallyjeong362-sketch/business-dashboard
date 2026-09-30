@@ -1181,6 +1181,14 @@ function addBookFeePayment(next, studentId, monthKey, amount) {
   else { r.status = 'partial'; r.paidDate = todayStr(); }
 }
 
+// 결제일이 31일처럼 그 달에 없는 날짜일 수 있다(30일까지만 있는 달, 28·29일까지만 있는
+// 2월 등). 그런 달에는 그 달의 마지막 날을 결제일로 쳐서 판단한다.
+function effectivePaymentDueDay(paymentDueDay, year, month1to12) {
+  if (!paymentDueDay) return null;
+  const lastDay = new Date(year, month1to12, 0).getDate();
+  return Math.min(paymentDueDay, lastDay);
+}
+
 // Before this month's due date arrives, an unpaid record isn't "미납(연체)" yet — it's simply not
 // due. Only the current month gets this leniency; a still-unpaid record from a past month is
 // unambiguously overdue.
@@ -1190,7 +1198,8 @@ function isBeforeDueDateThisMonth(student, monthKey) {
   if (monthKey > currentMonthKey()) return true;
   if (monthKey !== currentMonthKey() || !student.paymentDueDay) return false;
   const todayDay = parseInt(todayStr().split('-')[2], 10);
-  return todayDay < student.paymentDueDay;
+  const y = parseInt(monthKey.slice(0, 4), 10), mo = parseInt(monthKey.slice(5, 7), 10);
+  return todayDay < effectivePaymentDueDay(student.paymentDueDay, y, mo);
 }
 
 function paymentDisplayStatus(student, monthKey, record) {
@@ -3361,8 +3370,10 @@ function App() {
     const dueToday = [], dueTomorrow = [], unpaidList = [];
     allStudents(data).filter(s => isActiveForPaymentView(s, monthKey)).forEach(s => {
       const t = getTuitionRecord(data, s.id, monthKey);
-      if (s.paymentDueDay === todayDay) dueToday.push(s);
-      else if (s.paymentDueDay === tomorrowDay) dueTomorrow.push(s);
+      // 결제일이 31일처럼 이번 달/다음 날짜엔 없는 날일 수 있으므로(30일·28일까지만 있는 달 등),
+      // 그 달의 마지막 날로 보정해서 비교한다.
+      if (effectivePaymentDueDay(s.paymentDueDay, now.getFullYear(), now.getMonth() + 1) === todayDay) dueToday.push(s);
+      else if (effectivePaymentDueDay(s.paymentDueDay, tomorrow.getFullYear(), tomorrow.getMonth() + 1) === tomorrowDay) dueTomorrow.push(s);
       if ((t.status === 'unpaid' || t.status === 'overdue') && !isBeforeDueDateThisMonth(s, monthKey)) unpaidList.push(s);
     });
     return { dueToday, dueTomorrow, unpaidList };

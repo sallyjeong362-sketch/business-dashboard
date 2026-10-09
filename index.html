@@ -787,14 +787,18 @@ function isActiveInMonth(s, monthKey) {
   return !s.withdrawDate || s.withdrawDate >= monthKey + '-01';
 }
 
-// 수납현황 명단·미납 알림 대상: 이번 달(또는 미래 달)을 보는 중이면 "지금 재원 중인지"로
-// 판단해, 이미 퇴소한 학생은 그 달에 며칠 다녔더라도 명단에서 빠지고 미납 알림도 안 간다
-// (헷갈림 방지). 지난 달 기록을 조회할 때는 그 달에 실제 재원했던 그대로 보여준다(기록 보존).
-// 특강반(수강료를 운영 시작월에 한 번만 일괄로 받는 반)은 그 시작월에만 수납현황에 나타나고,
-// 그 외의 달에는 (반이 아직 운영 중이더라도) 매달 다시 청구되는 것처럼 보이지 않도록 제외한다.
+// 수납현황 명단·미납 알림 대상·매출액: 이번 달(또는 미래 달)을 보는 중이면, 퇴소일이 그
+// 달 안에(실제로 아직 지나지 않은 미래 날짜로 입력해도) 들어오는 순간 바로 그 달 명단·
+// 매출액에서 빠진다 — 퇴소 처리하면서 "이 학생이 빠지면 매출이 얼마가 될지" 바로 확인할
+// 수 있게 하기 위함. 지난 달 기록을 조회할 때는 그 달에 실제 재원했던 그대로 보여준다
+// (기록 보존). 특강반(수강료를 운영 시작월에 한 번만 일괄로 받는 반)은 그 시작월에만
+// 수납현황에 나타나고, 그 외의 달에는(반이 아직 운영 중이더라도) 매달 다시 청구되는 것처럼
+// 보이지 않도록 제외한다.
 function isActiveForPaymentView(s, monthKey) {
   if (s.classSpecialBillingMonth && monthKey !== s.classSpecialBillingMonth) return false;
-  if (monthKey >= currentMonthKey()) return isActiveStudent(s, todayStr());
+  if (s.classArchived) return false;
+  if (s.onHold) return false;
+  if (monthKey >= currentMonthKey()) return !s.withdrawDate || s.withdrawDate > monthKey + '-31';
   return isActiveInMonth(s, monthKey);
 }
 

@@ -536,9 +536,18 @@ function worstAttendanceStreakBadge(data, entries) {
 const HW_META = {
   done: { label: '완료', cls: 'bg-green-100 text-green-700' },
   missing: { label: '미완', cls: 'bg-red-100 text-red-700' },
-  unchecked: { label: '미확인 (결석)', cls: 'bg-gray-200 text-gray-600' },
+  unchecked: { label: '미확인', cls: 'bg-gray-200 text-gray-600' },
   none: { label: '숙제 없음', cls: 'bg-blue-100 text-blue-700' },
 };
+
+// '미확인'은 결석이라 애초에 검사할 수 없었던 경우와, 출석은 했지만 아직 선생님이
+// 검사를 안 한 경우를 둘 다 포함한다. 학부모에게는 둘이 전혀 다른 의미라 혼동을 막기
+// 위해, 출결 상태(status)를 함께 보고 "미확인 (결석)" / "미확인 (출석)"로 구분해 보여준다.
+function homeworkLabel(hw, status) {
+  const meta = HW_META[hw] || HW_META.missing;
+  if (hw !== 'unchecked' || !status) return meta.label;
+  return meta.label + (status === 'absent' ? ' (결석)' : ' (출석)');
+}
 
 /* 데일리 리포트: 특정 날짜의 출결·수업 진도·숙제·시험 결과를 알림톡 변수로 구성.
    숙제 이행률은 그날 하루 기준(했으면 100%, 안 했으면 0%) — 위클리·먼슬리처럼
@@ -549,7 +558,7 @@ function buildDailyReportVars(data, student, dateStr) {
   const lesson = getLessonLog(data, dateStr, student.classId) || '기록 없음';
   const hw = normalizeHomework(entry);
   const assigned = getClassHomework(data, dateStr, student.classId);
-  const hwParts = [hw ? '검사 ' + (HW_META[hw] || HW_META.missing).label : '검사 기록 없음'];
+  const hwParts = [hw ? '검사 ' + homeworkLabel(hw, entry && entry.status) : '검사 기록 없음'];
   if (assigned) hwParts.push('오늘 숙제: ' + assigned);
   const homework = hwParts.join(' · ');
   // 단어/문법시험 탭의 채점 기록과 연동: 시험 종류별로 통과 여부를 구분해 표시
@@ -697,7 +706,7 @@ function buildReportStandaloneHTML(data, rd, comment) {
   const details = rd.attendanceDetails.map(a => {
     const st = STATUS[a.status];
     const parts = [`${a.date} — ${st.label}`];
-    if (a.hw) parts.push(`숙제 ${(HW_META[a.hw] || HW_META.missing).label}`);
+    if (a.hw) parts.push(`숙제 ${homeworkLabel(a.hw, a.status)}`);
     if (a.note) parts.push(`사유: ${a.note}`);
     if (a.lesson) parts.push(`수업: ${a.lesson}`);
     if (a.homeworkAssigned) parts.push(`내준 숙제: ${a.homeworkAssigned}`);
@@ -3436,7 +3445,7 @@ function App() {
     Object.keys(data.attendance).sort().reverse().forEach(d => {
       const entry = getAttendanceEntry(data, d, student.classId, student.id);
       const hw = normalizeHomework(entry);
-      if (hw) homeworkHistory.push({ date: d, hw, hwNote: entry?.homeworkNote || '' });
+      if (hw) homeworkHistory.push({ date: d, hw, hwNote: entry?.homeworkNote || '', status: entry?.status });
     });
     homeworkHistory = homeworkHistory.slice(0, 10);
 
@@ -4914,7 +4923,7 @@ function App() {
                           <span className={`px-1.5 py-0.5 rounded-full ${STATUS[a.status]?.color}`}>{STATUS[a.status]?.label}</span>
                           {a.hw && (
                             <span className={`px-1.5 py-0.5 rounded-full ${(HW_META[a.hw] || HW_META.missing).cls}`}>
-                              숙제 {(HW_META[a.hw] || HW_META.missing).label}
+                              숙제 {homeworkLabel(a.hw, a.status)}
                             </span>
                           )}
                         </div>
@@ -4937,7 +4946,7 @@ function App() {
                       <div key={i} className="flex justify-between items-center gap-2 text-xs text-gray-700 bg-gray-50 px-2.5 py-1.5 rounded-lg">
                         <span>{h.date}{h.hwNote ? ` — ${h.hwNote}` : ''}</span>
                         <span className={`shrink-0 px-2 py-0.5 rounded-full font-medium ${(HW_META[h.hw] || HW_META.missing).cls}`}>
-                          {(HW_META[h.hw] || HW_META.missing).label}
+                          {homeworkLabel(h.hw, h.status)}
                         </span>
                       </div>
                     ))}

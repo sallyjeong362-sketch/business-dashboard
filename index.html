@@ -55,22 +55,23 @@ const BOOKFEE_STATUS = {
 };
 const GRADE_ORDER = ['초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
 const TAB_META = {
-  directory:   { label: '학생 전체 인적사항', pinned: true },
-  schedule:    { label: '시간표' },
-  attendance:  { label: '출결' },
-  payment:     { label: '수납현황' },
-  manage:      { label: '반 관리' },
-  report:      { label: '학습리포트' },
-  vocabtest:   { label: '단어/문법시험' },
-  metrics:     { label: '경영지표' },
-  notice:      { label: '공지사항' },
-  counseling:  { label: '상담관리' },
-  academySchedule: { label: '학원일정' },
-  worklog:     { label: '업무일지' },
-  news:        { label: '교육뉴스' },
-  admin:       { label: '관리자' },
+  home:        { label: '홈', icon: '🏠', pinned: true },
+  directory:   { label: '학생 전체 인적사항', icon: '👤', pinned: true },
+  schedule:    { label: '시간표', icon: '🗓️' },
+  attendance:  { label: '출결', icon: '✅' },
+  payment:     { label: '수납현황', icon: '💳' },
+  manage:      { label: '반 관리', icon: '🏫' },
+  report:      { label: '학습리포트', icon: '📊' },
+  vocabtest:   { label: '단어/문법시험', icon: '📝' },
+  metrics:     { label: '경영지표', icon: '📈' },
+  notice:      { label: '공지사항', icon: '📢' },
+  counseling:  { label: '상담관리', icon: '💬' },
+  academySchedule: { label: '학원일정', icon: '📅' },
+  worklog:     { label: '업무일지', icon: '🗒️' },
+  news:        { label: '교육뉴스', icon: '📰' },
+  admin:       { label: '관리자', icon: '⚙️' },
 };
-const DEFAULT_TAB_ORDER = ['directory','schedule','attendance','payment','metrics','manage','report','vocabtest','notice','counseling','academySchedule','worklog','news','admin'];
+const DEFAULT_TAB_ORDER = ['home','directory','schedule','attendance','payment','metrics','manage','report','vocabtest','notice','counseling','academySchedule','worklog','news','admin'];
 
 function normalizeTabOrder(order) {
   const seen = {};
@@ -79,6 +80,9 @@ function normalizeTabOrder(order) {
   DEFAULT_TAB_ORDER.forEach(id => { if (!seen[id]) { seen[id] = true; result.push(id); } });
   const pinned = result.filter(id => TAB_META[id].pinned);
   const rest = result.filter(id => !TAB_META[id].pinned);
+  // '홈'은 기존에 저장된 탭 순서에는 없을 수 있으므로(새로 추가된 탭), 고정 탭 중에서도
+  // 항상 맨 앞에 오도록 보정한다.
+  pinned.sort((a, b) => (a === 'home' ? -1 : b === 'home' ? 1 : 0));
   return pinned.concat(rest);
 }
 
@@ -1582,7 +1586,7 @@ function dDayInfo(ev, todayDateStr) {
 
 function App() {
   const [data, setData] = useState(loadData());
-  const [tab, setTab] = useState('schedule');
+  const [tab, setTab] = useState('home');
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [date, setDate] = useState(todayStr());
   const [reportStudentId, setReportStudentId] = useState(null);
@@ -1602,6 +1606,7 @@ function App() {
   const [noticeSendError, setNoticeSendError] = useState({});
   const [manageExpanded, setManageExpanded] = useState({});
   const [draggedTab, setDraggedTab] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [gatewayPendingFor, setGatewayPendingFor] = useState(null);
   const [gatewayErrorFor, setGatewayErrorFor] = useState({});
   const [reminderSendPending, setReminderSendPending] = useState(false);
@@ -3559,10 +3564,54 @@ function App() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4 pb-16">
+    <div className="min-h-screen bg-gray-50 md:flex">
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/40 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 shrink-0 bg-slate-900 text-slate-300 flex flex-col transform transition-transform duration-200 md:static md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex items-center gap-2.5 px-5 py-5 border-b border-white/10">
+          <div className="w-9 h-9 rounded-lg bg-indigo-500 text-white flex items-center justify-center font-bold text-sm shrink-0">
+            {(data.academyName || '학').slice(0, 1)}
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white truncate">{data.academyName}</p>
+            <p className="text-[11px] text-slate-400">관리자 대시보드</p>
+          </div>
+          <button onClick={() => setSidebarOpen(false)} className="ml-auto text-slate-400 hover:text-white md:hidden">✕</button>
+        </div>
+        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
+          {data.tabOrder.map(key => {
+            const meta = TAB_META[key];
+            return (
+              <button
+                key={key}
+                draggable={!meta.pinned}
+                onClick={() => { setTab(key); setSidebarOpen(false); }}
+                onDragStart={() => setDraggedTab(key)}
+                onDragEnd={() => setDraggedTab(null)}
+                onDragOver={e => { if (draggedTab && !meta.pinned) e.preventDefault(); }}
+                onDrop={e => { e.preventDefault(); reorderTabs(draggedTab, key); setDraggedTab(null); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition ${tab === key ? 'bg-indigo-600 text-white font-medium shadow-sm' : 'text-slate-300 hover:bg-white/5 hover:text-white'} ${meta.pinned ? '' : 'cursor-grab'}`}
+              >
+                <span className="text-base leading-none">{meta.icon}</span>
+                <span className="truncate">{meta.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <p className="px-5 py-3 text-[11px] text-slate-500 border-t border-white/10">탭을 드래그하면 순서를 바꿀 수 있어요. (학생 전체 인적사항은 항상 고정)</p>
+      </aside>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 md:hidden">
+          <button onClick={() => setSidebarOpen(true)} className="text-gray-500 text-xl leading-none">☰</button>
+          <p className="text-sm font-semibold text-gray-900 truncate">{data.academyName}</p>
+        </div>
+
+        <div className="max-w-3xl mx-auto p-4 pb-16">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">{data.academyName}</h1>
+          <h1 className="text-lg font-semibold text-gray-900 hidden md:block">{data.academyName}</h1>
           <p className="text-sm text-gray-500">{date} ({weekday}요일)</p>
         </div>
         <input
@@ -3573,6 +3622,8 @@ function App() {
         />
       </div>
 
+      {tab === 'home' && (
+        <>
       {(paymentAlerts.dueToday.length > 0 || paymentAlerts.dueTomorrow.length > 0 || paymentAlerts.unpaidList.length > 0) && (
         <div className="flex items-center justify-between gap-3 flex-wrap bg-yellow-50 border border-yellow-300 rounded-xl px-4 py-3 mb-5">
           <div className="space-y-1">
@@ -3639,25 +3690,8 @@ function App() {
         <SummaryCard label="미체크" value={summary.unchecked + '명'} tone="bg-gray-100 text-gray-600" />
         <SummaryCard label="오늘 상담" value={todayCounselingCount + '건'} tone="bg-purple-50 text-purple-700" />
       </div>
-
-      <div className="flex gap-1 mb-1 bg-gray-100 p-1 rounded-lg w-fit flex-wrap">
-        {data.tabOrder.map(key => {
-          const meta = TAB_META[key];
-          return (
-            <button
-              key={key}
-              draggable={!meta.pinned}
-              onClick={() => setTab(key)}
-              onDragStart={() => setDraggedTab(key)}
-              onDragEnd={() => setDraggedTab(null)}
-              onDragOver={e => { if (draggedTab && !meta.pinned) e.preventDefault(); }}
-              onDrop={e => { e.preventDefault(); reorderTabs(draggedTab, key); setDraggedTab(null); }}
-              className={`px-4 py-1.5 text-sm rounded-md transition ${tab===key ? 'bg-white shadow-sm text-indigo-700 font-medium' : 'text-gray-500'} ${meta.pinned ? 'font-semibold' : 'cursor-grab'}`}
-            >{meta.label}</button>
-          );
-        })}
-      </div>
-      <p className="text-xs text-gray-400 mb-4">탭을 드래그하면 순서를 바꿀 수 있어요. (학생 전체 인적사항 탭은 항상 첫 번째로 고정됩니다)</p>
+        </>
+      )}
 
       {alimtalkConfirm && (() => {
         const selectable = !!alimtalkConfirm.selectable;
@@ -6328,6 +6362,8 @@ function App() {
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

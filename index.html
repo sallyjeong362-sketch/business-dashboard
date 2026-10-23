@@ -1607,6 +1607,12 @@ function App() {
   const [manageExpanded, setManageExpanded] = useState({});
   const [draggedTab, setDraggedTab] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('academy_sidebar_collapsed') === '1'; } catch (e) { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('academy_sidebar_collapsed', sidebarCollapsed ? '1' : '0'); } catch (e) {}
+  }, [sidebarCollapsed]);
   const [gatewayPendingFor, setGatewayPendingFor] = useState(null);
   const [gatewayErrorFor, setGatewayErrorFor] = useState({});
   const [reminderSendPending, setReminderSendPending] = useState(false);
@@ -3568,17 +3574,25 @@ function App() {
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/40 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 shrink-0 bg-slate-900 text-slate-300 flex flex-col transform transition-transform duration-200 md:static md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="flex items-center gap-2.5 px-5 py-5 border-b border-white/10">
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 ${sidebarCollapsed ? 'md:w-16' : 'md:w-64'} shrink-0 bg-slate-900 text-slate-300 flex flex-col transform transition-all duration-200 md:static md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className={`flex items-center gap-2.5 px-5 py-5 border-b border-white/10 ${sidebarCollapsed ? 'md:justify-center md:px-0' : ''}`}>
           <div className="w-9 h-9 rounded-lg bg-indigo-500 text-white flex items-center justify-center font-bold text-sm shrink-0">
             {(data.academyName || '학').slice(0, 1)}
           </div>
-          <div className="min-w-0">
+          <div className={`min-w-0 ${sidebarCollapsed ? 'md:hidden' : ''}`}>
             <p className="text-sm font-semibold text-white truncate">{data.academyName}</p>
             <p className="text-[11px] text-slate-400">관리자 대시보드</p>
           </div>
-          <button onClick={() => setSidebarOpen(false)} className="ml-auto text-slate-400 hover:text-white md:hidden">✕</button>
+          <button onClick={() => setSidebarOpen(false)} className={`ml-auto text-slate-400 hover:text-white md:hidden ${sidebarCollapsed ? 'hidden' : ''}`}>✕</button>
         </div>
+        <button
+          onClick={() => setSidebarCollapsed(v => !v)}
+          title={sidebarCollapsed ? '메뉴 펼치기' : '메뉴 접기'}
+          className={`hidden md:flex items-center gap-2 mx-3 mt-2 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:bg-white/5 hover:text-white ${sidebarCollapsed ? 'justify-center' : ''}`}
+        >
+          <span className="leading-none">{sidebarCollapsed ? '»' : '«'}</span>
+          {!sidebarCollapsed && <span>메뉴 접기</span>}
+        </button>
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
           {data.tabOrder.map(key => {
             const meta = TAB_META[key];
@@ -3591,15 +3605,16 @@ function App() {
                 onDragEnd={() => setDraggedTab(null)}
                 onDragOver={e => { if (draggedTab && !meta.pinned) e.preventDefault(); }}
                 onDrop={e => { e.preventDefault(); reorderTabs(draggedTab, key); setDraggedTab(null); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition ${tab === key ? 'bg-indigo-600 text-white font-medium shadow-sm' : 'text-slate-300 hover:bg-white/5 hover:text-white'} ${meta.pinned ? '' : 'cursor-grab'}`}
+                title={sidebarCollapsed ? meta.label : undefined}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition ${tab === key ? 'bg-indigo-600 text-white font-medium shadow-sm' : 'text-slate-300 hover:bg-white/5 hover:text-white'} ${meta.pinned ? '' : 'cursor-grab'} ${sidebarCollapsed ? 'md:justify-center' : ''}`}
               >
                 <span className="text-base leading-none">{meta.icon}</span>
-                <span className="truncate">{meta.label}</span>
+                <span className={`truncate ${sidebarCollapsed ? 'md:hidden' : ''}`}>{meta.label}</span>
               </button>
             );
           })}
         </nav>
-        <p className="px-5 py-3 text-[11px] text-slate-500 border-t border-white/10">탭을 드래그하면 순서를 바꿀 수 있어요. (학생 전체 인적사항은 항상 고정)</p>
+        <p className={`px-5 py-3 text-[11px] text-slate-500 border-t border-white/10 ${sidebarCollapsed ? 'md:hidden' : ''}`}>탭을 드래그하면 순서를 바꿀 수 있어요. (학생 전체 인적사항은 항상 고정)</p>
       </aside>
 
       <div className="flex-1 min-w-0">

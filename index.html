@@ -3622,9 +3622,7 @@ function App() {
         />
       </div>
 
-      {tab === 'home' && (
-        <>
-      {(paymentAlerts.dueToday.length > 0 || paymentAlerts.dueTomorrow.length > 0 || paymentAlerts.unpaidList.length > 0) && (
+      {(tab === 'home' || tab === 'payment') && (paymentAlerts.dueToday.length > 0 || paymentAlerts.dueTomorrow.length > 0 || paymentAlerts.unpaidList.length > 0) && (
         <div className="flex items-center justify-between gap-3 flex-wrap bg-yellow-50 border border-yellow-300 rounded-xl px-4 py-3 mb-5">
           <div className="space-y-1">
             {paymentAlerts.dueToday.length > 0 && (
@@ -3646,11 +3644,16 @@ function App() {
               </p>
             )}
           </div>
-          <button onClick={() => setTab('payment')} className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg border border-yellow-400 text-yellow-800 bg-white hover:bg-yellow-100">
-            수납현황 바로가기
-          </button>
+          {tab !== 'payment' && (
+            <button onClick={() => setTab('payment')} className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg border border-yellow-400 text-yellow-800 bg-white hover:bg-yellow-100">
+              수납현황 바로가기
+            </button>
+          )}
         </div>
       )}
+
+      {tab === 'home' && (
+        <>
 
       {(() => {
         const todayD = todayStr();

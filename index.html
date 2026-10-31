@@ -1295,7 +1295,7 @@ function isBeforeDueDateThisMonth(student, monthKey) {
 
 function paymentDisplayStatus(student, monthKey, record) {
   if (record.status !== 'unpaid') return PAYMENT_STATUS[record.status] || PAYMENT_STATUS.unpaid;
-  if (isBeforeDueDateThisMonth(student, monthKey)) return { label: '결제 예정', color: 'bg-gray-100 text-gray-500 border-gray-300' };
+  if (!record.unpaidConfirmed && !record.paidDate && isBeforeDueDateThisMonth(student, monthKey)) return { label: '결제 예정', color: 'bg-gray-100 text-gray-500 border-gray-300' };
   return PAYMENT_STATUS.unpaid;
 }
 
@@ -1569,16 +1569,25 @@ function getVocabTest(data, studentId, dateStr, testType) {
   return data.vocabTests.find(v => v.studentId === studentId && v.date === dateStr && v.testType === testType);
 }
 
+// One eligibility rule for the payment list, manual reminders and automatic checks.
+// A manual unpaid correction remains eligible even before the usual due day.
+// Legacy corrections left paidDate behind; recognize them without rewriting records.
+function paymentReminderStudents(data, monthKey = currentMonthKey()) {
+  if (monthKey > currentMonthKey()) return [];
+  return allStudents(data).filter(s => {
+    if (!isActiveForPaymentView(s, monthKey)) return false;
+    const t = getTuitionRecord(data, s.id, monthKey);
+    if (!['unpaid', 'overdue'].includes(t.status)) return false;
+    const restoredUnpaid = t.status === 'unpaid' && (t.unpaidConfirmed === true || !!t.paidDate);
+    return restoredUnpaid || t.status === 'overdue' || !isBeforeDueDateThisMonth(s, monthKey);
+  });
+}
+
 function unpaidPhoneList(data) {
   const phones = [];
   const monthKey = currentMonthKey();
-  allStudents(data).filter(s => isActiveInMonth(s, monthKey)).forEach(s => {
-    const t = getTuitionRecord(data, s.id, monthKey);
-    // Only count as unpaid/overdue once this month's due date has actually arrived — before
-    // that, non-payment simply isn't due yet, so it shouldn't trigger reminders.
-    if ((t.status === 'unpaid' || t.status === 'overdue') && !isBeforeDueDateThisMonth(s, monthKey) && s.parentPhone && !phones.includes(s.parentPhone)) {
-      phones.push(s.parentPhone);
-    }
+  paymentReminderStudents(data, monthKey).forEach(s => {
+    if (s.parentPhone && !phones.includes(s.parentPhone)) phones.push(s.parentPhone);
   });
   return phones;
 }
@@ -2454,6 +2463,8 @@ function App() {
       const rec = ensureTuitionRecord(next, studentId, monthKey);
       rec.status = status;
       if (status === 'paid' && !rec.paidDate) rec.paidDate = todayStr();
+      if (status === 'unpaid' || status === 'overdue') { rec.paidDate = null; rec.unpaidConfirmed = true; }
+      else { delete rec.unpaidConfirmed; }
       return next;
     });
   }
@@ -2761,7 +2772,8 @@ function App() {
   function openPaymentReminderConfirm() {
     const seen = {};
     const recips = [];
-    paymentAlerts.unpaidList.forEach(s => {
+    const reminderMonthKey = activePaymentMonthKey();
+    paymentReminderStudents(data, reminderMonthKey).forEach(s => {
       if (s.parentPhone && !seen[s.parentPhone]) {
         seen[s.parentPhone] = true;
         recips.push({ name: s.name + ' 학부모', phone: s.parentPhone });
@@ -2773,7 +2785,7 @@ function App() {
     recips.forEach(r => { init[r.phone] = true; });
     setAlimtalkChecked(init);
     setAlimtalkConfirm({
-      title: '미납 수강료 안내',
+      title: monthKeyLabel(reminderMonthKey) + ' 미납 수강료 안내',
       recipients: recips,
       selectable: true,
       previewText: `안녕하세요. ${data.academyName}입니다.\n${todayStr()} 기준으로 수강료가 아직 결제되지 않아 안내드립니다.\n확인 후 결제 부탁드립니다.\n\n이미 결제하셨다면 이 안내는 무시해 주세요.\n궁금하신 점은 학원으로 문의해 주세요.`,
@@ -3472,7 +3484,7 @@ function App() {
       // 그 달의 마지막 날로 보정해서 비교한다.
       if (effectivePaymentDueDay(s.paymentDueDay, now.getFullYear(), now.getMonth() + 1) === todayDay) dueToday.push(s);
       else if (effectivePaymentDueDay(s.paymentDueDay, tomorrow.getFullYear(), tomorrow.getMonth() + 1) === tomorrowDay) dueTomorrow.push(s);
-      if ((t.status === 'unpaid' || t.status === 'overdue') && !isBeforeDueDateThisMonth(s, monthKey)) unpaidList.push(s);
+      if (paymentReminderStudents(data, monthKey).some(p => p.id === s.id)) unpaidList.push(s);
     });
     return { dueToday, dueTomorrow, unpaidList };
   }, [data]);
@@ -4267,7 +4279,7 @@ function App() {
               <div>
                 <p className="text-sm font-medium text-gray-900">수납 알림톡 발송</p>
                 <p className="text-xs text-gray-500">
-                  미납 {paymentAlerts.unpaidList.length}명 · 오늘·내일 결제일 {paymentAlerts.dueToday.length + paymentAlerts.dueTomorrow.length}명
+                  {monthKeyLabel(activePaymentMonthKey())} 미납 {paymentReminderStudents(data, activePaymentMonthKey()).length}명 · 오늘·내일 결제일 {paymentAlerts.dueToday.length + paymentAlerts.dueTomorrow.length}명
                   {data.autoPaymentReminderLastSent ? ` · 마지막 발송 ${data.autoPaymentReminderLastSent}` : ''}
                 </p>
                 <p className="text-xs text-gray-400 mt-0.5">자동발송은 없습니다 — 아래 버튼을 눌러 학생별로 확인·선택한 뒤에만 전송돼요.</p>
@@ -4503,7 +4515,7 @@ function App() {
                     <div className="flex items-center gap-2 flex-wrap justify-end">
                       <span className="text-[11px] font-semibold text-gray-400">수업료</span>
                       {Object.entries(PAYMENT_STATUS).map(([key, val]) => {
-                        const display = key === 'unpaid' ? paymentDisplayStatus(s, paymentMonthKey, { status: 'unpaid' }) : val;
+                        const display = key === 'unpaid' ? paymentDisplayStatus(s, paymentMonthKey, p.status === 'unpaid' ? p : { status: 'unpaid' }) : val;
                         return (
                           <button key={key}
                             onClick={() => setPaymentStatus(s.id, key)}

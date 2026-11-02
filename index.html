@@ -882,11 +882,36 @@ function isActiveInMonth(s, monthKey) {
 // 수납현황에 나타나고, 그 외의 달에는(반이 아직 운영 중이더라도) 매달 다시 청구되는 것처럼
 // 보이지 않도록 제외한다.
 function isActiveForPaymentView(s, monthKey) {
+  if (s.archived || s.withdrawn === true || s.withdrawn === 1) return false;
   if (s.classSpecialBillingMonth && monthKey !== s.classSpecialBillingMonth) return false;
   if (s.classArchived) return false;
   if (s.onHold) return false;
   if (monthKey >= currentMonthKey()) return !s.withdrawDate || s.withdrawDate > monthKey + '-31';
   return isActiveInMonth(s, monthKey);
+}
+
+// Payment rosters use the same withdrawal state across copies with the same student ID.
+// Default lists exclude departed students even when browsing an old billing month.
+// The optional historical view never changes or deletes the saved payment records.
+function paymentViewStudents(data, monthKey, includeWithdrawnHistory = false) {
+  const copies = {};
+  data.classes.forEach(c => c.students.forEach(s => {
+    const flags = copies[s.id] || (copies[s.id] = { withdrawDate: '', withdrawn: false, archived: false });
+    const departure = String(s.withdrawDate || s.withdrawnAt || '').slice(0, 10);
+    if (departure > flags.withdrawDate) flags.withdrawDate = departure;
+    flags.withdrawn = flags.withdrawn || s.withdrawn === true || s.withdrawn === 1;
+    flags.archived = flags.archived || !!s.archived;
+  }));
+  return allStudents(data).filter(s => {
+    const flags = copies[s.id] || {};
+    const merged = { ...s, withdrawDate: flags.withdrawDate || s.withdrawDate, withdrawn: flags.withdrawn, archived: flags.archived };
+    if (includeWithdrawnHistory && monthKey < currentMonthKey()) {
+      if (s.classSpecialBillingMonth && monthKey !== s.classSpecialBillingMonth) return false;
+      return !merged.withdrawDate || merged.withdrawDate >= monthKey + '-01';
+    }
+    if (merged.withdrawn || merged.archived || (merged.withdrawDate && merged.withdrawDate < todayStr())) return false;
+    return isActiveForPaymentView(merged, monthKey);
+  });
 }
 
 // 반 정원: 재원생(퇴소생 제외)이 정원에 차면 마감, 퇴소생이 생기면 자동으로 풀린다.
@@ -1299,8 +1324,8 @@ function paymentDisplayStatus(student, monthKey, record) {
   return PAYMENT_STATUS.unpaid;
 }
 
-function computePaymentSummary(data, monthKey) {
-  const students = allStudents(data).filter(s => isActiveForPaymentView(s, monthKey));
+function computePaymentSummary(data, monthKey, visibleStudents = null) {
+  const students = visibleStudents || (monthKey < currentMonthKey() ? allStudents(data).filter(s => isActiveForPaymentView(s, monthKey)) : paymentViewStudents(data, monthKey));
   let paidCount = 0, totalDue = 0, totalCollected = 0;
   students.forEach(s => {
     const t = getTuitionRecord(data, s.id, monthKey);
@@ -1574,8 +1599,7 @@ function getVocabTest(data, studentId, dateStr, testType) {
 // Legacy corrections left paidDate behind; recognize them without rewriting records.
 function paymentReminderStudents(data, monthKey = currentMonthKey()) {
   if (monthKey > currentMonthKey()) return [];
-  return allStudents(data).filter(s => {
-    if (!isActiveForPaymentView(s, monthKey)) return false;
+  return paymentViewStudents(data, monthKey).filter(s => {
     const t = getTuitionRecord(data, s.id, monthKey);
     if (!['unpaid', 'overdue'].includes(t.status)) return false;
     const restoredUnpaid = t.status === 'unpaid' && (t.unpaidConfirmed === true || !!t.paidDate);
@@ -1804,6 +1828,7 @@ function App() {
     setTeacherFormFor(null);
   }
   const [paymentViewMonth, setPaymentViewMonth] = useState(null);
+  const [showWithdrawnPaymentHistory, setShowWithdrawnPaymentHistory] = useState(false);
   const [showPaymentMonthlyStats, setShowPaymentMonthlyStats] = useState(false);
   const [openLessonLogClasses, setOpenLessonLogClasses] = useState({});
   const [openLessonLogTeachers, setOpenLessonLogTeachers] = useState({});
@@ -2305,9 +2330,11 @@ function App() {
   function saveStudentInfo(classId, studentId, fields) {
     setData(prev => ({
       ...prev,
-      classes: prev.classes.map(c => c.id === classId
-        ? { ...c, students: c.students.map(s => s.id === studentId ? { ...s, ...fields } : s) }
-        : c)
+      classes: prev.classes.map(c => ({ ...c, students: c.students.map(s => {
+        if (s.id !== studentId) return s;
+        const departure = Object.prototype.hasOwnProperty.call(fields, 'withdrawDate') ? { withdrawDate: fields.withdrawDate, withdrawn: false, withdrawnAt: null } : {};
+        return c.id === classId ? { ...s, ...fields, ...departure } : { ...s, ...departure };
+      }) }))
     }));
     setStudentFormFor(null);
   }
@@ -3478,7 +3505,7 @@ function App() {
     const tomorrowDay = tomorrow.getDate();
     const monthKey = currentMonthKey();
     const dueToday = [], dueTomorrow = [], unpaidList = [];
-    allStudents(data).filter(s => isActiveForPaymentView(s, monthKey)).forEach(s => {
+    paymentViewStudents(data, monthKey).forEach(s => {
       const t = getTuitionRecord(data, s.id, monthKey);
       // 결제일이 31일처럼 이번 달/다음 날짜엔 없는 날일 수 있으므로(30일·28일까지만 있는 달 등),
       // 그 달의 마지막 날로 보정해서 비교한다.
@@ -4373,7 +4400,8 @@ function App() {
             const paymentMonthKey = activePaymentMonthKey();
             const isPastMonth = paymentMonthKey < currentMonthKey();
             const isFutureMonth = paymentMonthKey > currentMonthKey();
-            const viewSummary = computePaymentSummary(data, paymentMonthKey);
+            const visiblePaymentStudents = paymentViewStudents(data, paymentMonthKey, isPastMonth && showWithdrawnPaymentHistory);
+            const viewSummary = computePaymentSummary(data, paymentMonthKey, visiblePaymentStudents);
             // 화살표로 아직 기록이 없는 미래 달까지 이동했을 수 있으므로, 드롭다운에도 그 달을 포함시켜 선택값이 어긋나지 않게 한다.
             const monthOptions = Array.from(new Set([...availableMonthKeys(data), paymentMonthKey])).sort().reverse();
             return (
@@ -4401,6 +4429,8 @@ function App() {
                   </select>
                 </div>
 
+                <p className="text-xs text-gray-500 mb-3">기본 명단은 현재 재원생만 표시합니다. 퇴소생의 과거 납부 기록은 보존됩니다.</p>
+                {isPastMonth && <label className="flex items-center gap-2 text-xs text-gray-600 mb-3"><input type="checkbox" checked={showWithdrawnPaymentHistory} onChange={e => setShowWithdrawnPaymentHistory(e.target.checked)} />퇴소생 과거 기록 포함</label>}
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
                   <MetricBox label="수납률" value={viewSummary.rate + '%'} />
                   <MetricBox label="완납" value={viewSummary.paidCount + ' / ' + viewSummary.total + '명'} />
@@ -4427,7 +4457,7 @@ function App() {
                         </thead>
                         <tbody>
                           {metricsTrendMonths(paymentMonthKey, 6).map(mk => {
-                            const s = computePaymentSummary(data, mk);
+                            const s = computePaymentSummary(data, mk, paymentViewStudents(data, mk, showWithdrawnPaymentHistory));
                             const unpaid = s.total - s.paidCount;
                             return (
                               <tr key={mk} className="border-b border-gray-100 last:border-0">
@@ -4450,7 +4480,7 @@ function App() {
                 )}
 
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-                  {allStudents(data).filter(s => isActiveForPaymentView(s, paymentMonthKey)).sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
+                  {visiblePaymentStudents.sort(paymentSortComparator(paymentSort, data.paymentsByMonth[paymentMonthKey] || {})).map(s => {
                     const p = getTuitionRecord(data, s.id, paymentMonthKey);
                     const bfChips = bookFeeChips(data, s.id, paymentMonthKey);
                     const bfOut = bookFeeOutstanding(data, s.id, paymentMonthKey);

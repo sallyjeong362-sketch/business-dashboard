@@ -8,6 +8,9 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
   ::-webkit-scrollbar { width: 8px; }
@@ -107,6 +110,61 @@ aside > p:last-child { color:#a5bfb2; line-height:1.8; }
 
 <script type="text/babel">
 const { useState, useEffect, useMemo, useRef } = React;
+
+/* ---- Firebase (선생님 간 실시간 동기화) ----
+   반/학생 명단·출결·단어·문법시험 기록·시험범위 자동생성 설정은 이제 이 Firebase
+   프로젝트가 전담한다. 예전 깃허브 전체 파일 덮어쓰기 방식과 달리, 학생 한 명/출결
+   하루치/시험 한 건 단위로 따로 저장되기 때문에, 선생님 두 명이 동시에 서로 다른
+   것을 고쳐도 서로의 변경을 덮어쓰지 않는다(그동안의 "학생 중복/유실" 문제의 근본 원인). */
+const firebaseConfig = {
+  apiKey: "AIzaSyANWHgoPsGNez4UMbK8FRw0Yc2AHeA68f8",
+  authDomain: "sally-academy.firebaseapp.com",
+  projectId: "sally-academy",
+  storageBucket: "sally-academy.firebasestorage.app",
+  messagingSenderId: "46440371473",
+  appId: "1:46440371473:web:4b044c17d159e33d68e8b0"
+};
+let fbAuth = null, fbDb = null, fbReady = false;
+try {
+  if (window.firebase) {
+    firebase.initializeApp(firebaseConfig);
+    fbAuth = firebase.auth();
+    fbDb = firebase.firestore();
+    fbDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+    fbReady = true;
+  }
+} catch (e) { console.error('Firebase 초기화 실패', e); }
+
+// 이 4가지는 Firebase가 전담하므로 예전 깃허브 동기화 전체-덮어쓰기 대상에서는 뺀다
+// (안 그러면 두 동기화가 서로의 변경을 되돌리게 된다).
+const FIREBASE_SYNCED_KEYS = ['classes', 'attendance', 'vocabTests', 'examPatterns'];
+
+// Firestore 컬렉션 ↔ (id가 있는) 배열 동기화: 문서 하나 = 배열 항목 하나.
+// 바뀐 항목만 set, 로컬에서 사라진 항목만 delete — 전체를 통째로 덮어쓰지 않는다.
+function diffAndSyncArray(collRef, prevArr, nextArr, idFn) {
+  const prevMap = {}; (prevArr || []).forEach(x => { prevMap[idFn(x)] = x; });
+  const nextMap = {}; (nextArr || []).forEach(x => { nextMap[idFn(x)] = x; });
+  Object.keys(nextMap).forEach(id => {
+    if (JSON.stringify(prevMap[id] || null) !== JSON.stringify(nextMap[id])) {
+      collRef.doc(id).set(nextMap[id]).catch(e => console.error('firestore 저장 실패', id, e));
+    }
+  });
+  Object.keys(prevMap).forEach(id => {
+    if (!(id in nextMap)) collRef.doc(id).delete().catch(e => console.error('firestore 삭제 실패', id, e));
+  });
+}
+// Firestore 컬렉션 ↔ {key: value} 객체 동기화 (예: 출결의 날짜별 문서).
+function diffAndSyncMap(collRef, prevObj, nextObj) {
+  const prev = prevObj || {}, next = nextObj || {};
+  Object.keys(next).forEach(key => {
+    if (JSON.stringify(prev[key] || null) !== JSON.stringify(next[key])) {
+      collRef.doc(key).set(next[key]).catch(e => console.error('firestore 저장 실패', key, e));
+    }
+  });
+  Object.keys(prev).forEach(key => {
+    if (!(key in next)) collRef.doc(key).delete().catch(e => console.error('firestore 삭제 실패', key, e));
+  });
+}
 
 const STORAGE_KEY = 'academy_dashboard_v2';
 const DAYS = ['일','월','화','수','목','금','토'];
@@ -530,7 +588,11 @@ async function syncPushNow() {
     syncState.status = 'ok'; notifySyncListeners();
     return;
   }
-  const envelope = { updatedAt: localData._updatedAt || new Date().toISOString(), data: localData };
+  // 반/학생/출결/시험범위/단어시험 기록은 Firebase가 전담하므로 깃허브 전체-덮어쓰기
+  // 대상에서 뺀다(안 그러면 두 동기화가 서로의 변경을 되돌리게 된다).
+  const pushData = { ...localData };
+  FIREBASE_SYNCED_KEYS.forEach(k => delete pushData[k]);
+  const envelope = { updatedAt: localData._updatedAt || new Date().toISOString(), data: pushData };
   await syncApiRequest(cfg, 'PUT', {
     message: 'dashboard sync ' + envelope.updatedAt,
     content: b64EncodeUnicode(JSON.stringify(envelope)),
@@ -1709,7 +1771,7 @@ function dDayInfo(ev, todayDateStr) {
   return { label, color };
 }
 
-function App() {
+function App({ currentUser } = {}) {
   const [data, setData] = useState(loadData());
   const [tab, setTab] = useState('home');
   const [selectedClassId, setSelectedClassId] = useState(null);
@@ -2023,6 +2085,11 @@ function App() {
         syncState.lastRemoteUpdatedAt = remoteAt;
         if (remoteAt && remoteAt > localAt) {
           r.envelope.data._updatedAt = remoteAt;
+          // 반/학생/출결/시험범위/단어시험 기록은 Firebase가 전담 — 깃허브 쪽 값으로 되돌리지 않는다.
+          try {
+            const curLocal = localRaw ? JSON.parse(localRaw) : null;
+            if (curLocal) FIREBASE_SYNCED_KEYS.forEach(k => { if (curLocal[k] !== undefined) r.envelope.data[k] = curLocal[k]; });
+          } catch (e) {}
           localStorage.setItem(STORAGE_KEY, JSON.stringify(r.envelope.data));
           syncState.applyingRemote = true;
           setData(loadData());
@@ -2064,6 +2131,12 @@ function App() {
         );
         if (useRemote) {
           r.envelope.data._updatedAt = r.envelope.updatedAt;
+          // 반/학생/출결/시험범위/단어시험 기록은 Firebase가 전담 — 깃허브 쪽 값으로 되돌리지 않는다.
+          try {
+            const rawNow = localStorage.getItem(STORAGE_KEY);
+            const curLocal = rawNow ? JSON.parse(rawNow) : null;
+            if (curLocal) FIREBASE_SYNCED_KEYS.forEach(k => { if (curLocal[k] !== undefined) r.envelope.data[k] = curLocal[k]; });
+          } catch (e) {}
           localStorage.setItem(STORAGE_KEY, JSON.stringify(r.envelope.data));
           syncState.lastRemoteUpdatedAt = r.envelope.updatedAt;
           syncState.applyingRemote = true;
@@ -2098,6 +2171,75 @@ function App() {
       setData(prev => promoteGradesInData(prev));
     }
   }, []);
+
+  /* ---- Firebase 실시간 동기화 (반/학생·출결·단어문법시험·시험범위 패턴) ----
+     각 반/날짜별 출결/시험 1건이 각각 독립된 Firestore 문서라서, 선생님별로 서로
+     다른 것을 고쳐도 안전하게 합쳐진다. 로컬에서 바뀐 부분만 올리고(diffAndSync*),
+     원격에서 바뀐 부분은 실시간으로 내려받아 합친다(onSnapshot). */
+  const fsPrevRef = useRef({ classes: undefined, attendance: undefined, vocabTests: undefined, examPatterns: undefined });
+  const fsApplyingRemoteRef = useRef(false);
+  const fsSeededRef = useRef({ classes: false, attendance: false, vocabTests: false, examPatterns: false });
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+  const [fsConnected, setFsConnected] = useState(false);
+
+  function fsPushKey(key) {
+    const prev = fsPrevRef.current;
+    const cur = dataRef.current;
+    if (key === 'classes') diffAndSyncArray(fbDb.collection('classes'), prev.classes, cur.classes, c => c.id);
+    else if (key === 'attendance') diffAndSyncMap(fbDb.collection('attendance'), prev.attendance, cur.attendance);
+    else if (key === 'vocabTests') diffAndSyncArray(fbDb.collection('vocabTests'), prev.vocabTests, cur.vocabTests, v => v.id);
+    else if (key === 'examPatterns') fbDb.collection('examPatterns').doc('main').set(cur.examPatterns || { classes: {}, students: {} }).catch(e => console.error('examPatterns 저장 실패', e));
+    fsPrevRef.current = { ...fsPrevRef.current, [key]: cur[key] };
+  }
+
+  useEffect(() => {
+    if (!fbReady || !fbDb || !fbAuth || !fbAuth.currentUser) return;
+    const applyRemote = (partial, key, isEmpty) => {
+      // 새 Firebase 프로젝트라 해당 컬렉션(문서)이 아직 비어 있는("처음 보는") 상태면, 그걸
+      // 그대로 적용해 이 기기의 기존 데이터를 지우지 않는다 — 대신 지금 가진 로컬 데이터를
+      // 바로 Firestore로 올려서 채운다(최초 연결 시 1회 시딩).
+      if (!fsSeededRef.current[key] && isEmpty) {
+        fsSeededRef.current[key] = true;
+        fsPushKey(key);
+        return;
+      }
+      fsSeededRef.current[key] = true;
+      fsApplyingRemoteRef.current = true;
+      fsPrevRef.current = { ...fsPrevRef.current, ...partial };
+      setData(prev => ({ ...prev, ...partial }));
+    };
+    const unsubs = [
+      fbDb.collection('classes').onSnapshot(snap => {
+        applyRemote({ classes: snap.docs.map(d => d.data()) }, 'classes', snap.empty);
+        setFsConnected(true);
+      }, e => console.error('classes 동기화 오류', e)),
+      fbDb.collection('attendance').onSnapshot(snap => {
+        const attendance = {};
+        snap.docs.forEach(d => { attendance[d.id] = d.data(); });
+        applyRemote({ attendance }, 'attendance', snap.empty);
+      }, e => console.error('attendance 동기화 오류', e)),
+      fbDb.collection('vocabTests').onSnapshot(snap => {
+        applyRemote({ vocabTests: snap.docs.map(d => d.data()) }, 'vocabTests', snap.empty);
+      }, e => console.error('vocabTests 동기화 오류', e)),
+      fbDb.collection('examPatterns').doc('main').onSnapshot(doc => {
+        applyRemote({ examPatterns: doc.exists ? doc.data() : { classes: {}, students: {} } }, 'examPatterns', !doc.exists);
+      }, e => console.error('examPatterns 동기화 오류', e)),
+    ];
+    return () => unsubs.forEach(u => u());
+  }, [fbReady, fbAuth && fbAuth.currentUser && fbAuth.currentUser.uid]);
+
+  useEffect(() => {
+    if (!fbReady || !fbDb || !fbAuth || !fbAuth.currentUser) return;
+    if (fsApplyingRemoteRef.current) { fsApplyingRemoteRef.current = false; return; }
+    if (fsSeededRef.current.classes) fsPushKey('classes');
+    if (fsSeededRef.current.attendance) fsPushKey('attendance');
+    if (fsSeededRef.current.vocabTests) fsPushKey('vocabTests');
+    if (fsSeededRef.current.examPatterns && JSON.stringify(fsPrevRef.current.examPatterns || null) !== JSON.stringify(data.examPatterns || null)) {
+      fsPushKey('examPatterns');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.classes, data.attendance, data.vocabTests, data.examPatterns]);
 
   /* 알림톡 자동발송 없음: 모든 발송은 확인 패널에서 수신자·문구를 확인한 뒤
      수동으로만 이루어진다. */
@@ -3783,6 +3925,16 @@ function App() {
             );
           })}
         </nav>
+        {fbReady && currentUser && (
+          <div className={`mx-3 mb-2 px-3 py-2 rounded-lg bg-white/5 text-[11px] text-slate-400 ${sidebarCollapsed ? 'md:hidden' : ''}`}>
+            <p className="flex items-center gap-1.5">
+              <span className={fsConnected ? 'text-green-400' : 'text-yellow-400'}>●</span>
+              {fsConnected ? '선생님 동기화 연결됨' : '동기화 연결 중…'}
+            </p>
+            <p className="truncate mt-0.5">{currentUser.email}</p>
+            <button onClick={() => fbAuth.signOut()} className="mt-1 text-slate-400 underline hover:text-white">로그아웃</button>
+          </div>
+        )}
         <a className={`sally-team-link ${sidebarCollapsed ? 'md:hidden' : ''}`} href="https://sally-business-team.ardentshell23.chatgpt.site" target="_blank" rel="noopener noreferrer">교직원 권한 · 시험 준비 버전 ↗</a>
         <p className={`px-5 py-3 text-[11px] text-slate-500 border-t border-white/10 ${sidebarCollapsed ? 'md:hidden' : ''}`}>탭을 드래그하면 순서를 바꿀 수 있어요. (학생 전체 인적사항은 항상 고정)</p>
       </aside>
@@ -7269,7 +7421,67 @@ function SharedReportView({ r }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(SHARED_REPORT ? <SharedReportView r={SHARED_REPORT} /> : <App />);
+/* 로그인 게이트: 반/학생/출결/시험 데이터를 Firebase가 전담하게 되면서, 아무나
+   접근 못 하도록 로그인(이메일/비밀번호)을 먼저 거치게 한다. 선생님 계정은 지금은
+   샐리 원장님이 Firebase 콘솔 Authentication에서 직접 추가한다(관리 화면은 다음 단계).
+   Firebase 설정이 안 된 상태(fbReady=false)면 예전처럼 로그인 없이 그대로 동작한다. */
+function AuthGate() {
+  const [user, setUser] = useState(fbReady ? undefined : null); // undefined=확인중, null=비로그인
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!fbReady || !fbAuth) return;
+    return fbAuth.onAuthStateChanged(u => setUser(u));
+  }, []);
+
+  if (!fbReady) return <App />;
+  if (user === undefined) {
+    return <div className="min-h-screen flex items-center justify-center text-sm text-gray-400">불러오는 중…</div>;
+  }
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <form
+          onSubmit={async e => {
+            e.preventDefault();
+            setErr(''); setBusy(true);
+            try {
+              await fbAuth.signInWithEmailAndPassword(email.trim(), pw);
+            } catch (e2) {
+              setErr(
+                e2.code === 'auth/invalid-credential' || e2.code === 'auth/wrong-password' || e2.code === 'auth/user-not-found'
+                  ? '이메일 또는 비밀번호가 올바르지 않습니다.'
+                  : '로그인에 실패했습니다. (' + (e2.message || e2.code) + ')'
+              );
+            }
+            setBusy(false);
+          }}
+          className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 w-full max-w-sm"
+        >
+          <p className="text-lg font-bold text-gray-800 mb-1">샐리스 대시보드</p>
+          <p className="text-xs text-gray-400 mb-5">로그인 후 이용해주세요. 계정이 없으면 원장님께 문의해주세요.</p>
+          <label className="block text-xs text-gray-500 mb-1">이메일</label>
+          <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3" placeholder="teacher@example.com" />
+          <label className="block text-xs text-gray-500 mb-1">비밀번호</label>
+          <input type="password" required value={pw} onChange={e => setPw(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4" placeholder="••••••••" />
+          {err && <p className="text-xs text-red-600 mb-3">{err}</p>}
+          <button type="submit" disabled={busy}
+            className="w-full py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold disabled:opacity-50">
+            {busy ? '로그인 중…' : '로그인'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+  return <App currentUser={user} />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(SHARED_REPORT ? <SharedReportView r={SHARED_REPORT} /> : <AuthGate />);
 </script>
 </body>
 </html>

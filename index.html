@@ -2129,7 +2129,28 @@ function App({ currentUser, teacherAccount } = {}) {
     setEditLessonLogFor(null);
   }
 
-  useEffect(() => { saveData(data); }, [data]);
+  // 타이핑할 때마다(키 누를 때마다) data가 바뀌는데, saveData는 전체 데이터를
+  // JSON으로 두 번 직렬화하고(변경 비교용 + 저장용) localStorage에 쓰는 무거운 작업이라
+  // 그걸 글자 하나마다 동기적으로 하면 입력이 버퍼링된 것처럼 느리게 반영된다.
+  // 그래서 타이핑이 잠깐 멈췄을 때(400ms) 한 번만 실제로 저장하도록 debounce 한다 —
+  // 화면에 보이는 값(React 상태)은 매 글자마다 즉시 바뀌니 입력 자체는 그대로 즉각적이다.
+  // 탭을 닫거나 새로고침할 때는 지연 중이던 저장을 바로 실행해 마지막 몇 글자가 안
+  // 날아가게 한다.
+  const latestDataRef = useRef(data);
+  latestDataRef.current = data;
+  useEffect(() => {
+    const timer = setTimeout(() => { saveData(data); }, 400);
+    return () => clearTimeout(timer);
+  }, [data]);
+  useEffect(() => {
+    const flush = () => saveData(latestDataRef.current);
+    window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
 
   // 특강반·내신대비반은 운영(내신대비) 종료일이 지나면 손대지 않아도 자동으로 보관 처리되어
   // 재원생 수·시간표·수납현황에서 빠진다 (기록은 반 관리의 "보관된 반"에서 계속 열람 가능).
@@ -2314,15 +2335,29 @@ function App({ currentUser, teacherAccount } = {}) {
     return () => unsubs.forEach(u => u());
   }, [fbReady, fbAuth && fbAuth.currentUser && fbAuth.currentUser.uid]);
 
+  // classes/examPatterns는 학생 추가처럼 프롬프트·저장버튼으로 드물게 한 번씩만
+  // 바뀌고(한 글자씩 타이핑되는 일이 없음) 그 자체로도 가벼우니 지연 없이 바로 올린다
+  // — 다른 선생님이 "거의 동시에" 같은 반에 학생을 추가하는 경우처럼 충돌 가능성이
+  // 있는 변경은 지연이 생기면 서로의 변경을 덮어쓸 위험이 커지기 때문이다.
+  // 반면 출결 사유·수업태도·시험 코멘트는 글자를 칠 때마다 data.attendance/
+  // vocabTests가 바뀌는데, 이 둘은 diffAndSync*가 전체 기록을 훑어 비교하는 비용이
+  // 쌓일수록 커지므로(기록이 많아질수록) saveData와 마찬가지로 타이핑이 멈춘 뒤
+  // (400ms)에만 올린다 — 단, 이 둘은 한 반/한 학생의 그 날짜 문서만 바뀌는 것이라
+  // (충돌 범위가 아주 좁음) 지연시켜도 동시편집 안전성에 미치는 영향은 작다.
+  const fsPushTimerRef = useRef(null);
   useEffect(() => {
     if (!fbReady || !fbDb || !fbAuth || !fbAuth.currentUser) return;
     if (fsApplyingRemoteRef.current) { fsApplyingRemoteRef.current = false; return; }
     if (fsSeededRef.current.classes) fsPushKey('classes');
-    if (fsSeededRef.current.attendance) fsPushKey('attendance');
-    if (fsSeededRef.current.vocabTests) fsPushKey('vocabTests');
-    if (fsSeededRef.current.examPatterns && JSON.stringify(fsPrevRef.current.examPatterns || null) !== JSON.stringify(data.examPatterns || null)) {
+    if (fsSeededRef.current.examPatterns && JSON.stringify(fsPrevRef.current.examPatterns || null) !== JSON.stringify(dataRef.current.examPatterns || null)) {
       fsPushKey('examPatterns');
     }
+    if (fsPushTimerRef.current) clearTimeout(fsPushTimerRef.current);
+    fsPushTimerRef.current = setTimeout(() => {
+      if (fsSeededRef.current.attendance) fsPushKey('attendance');
+      if (fsSeededRef.current.vocabTests) fsPushKey('vocabTests');
+    }, 400);
+    return () => clearTimeout(fsPushTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.classes, data.attendance, data.vocabTests, data.examPatterns]);
 

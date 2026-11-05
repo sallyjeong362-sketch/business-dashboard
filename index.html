@@ -2241,6 +2241,49 @@ function App({ currentUser } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.classes, data.attendance, data.vocabTests, data.examPatterns]);
 
+  /* ---- 선생님 계정 관리 ----
+     teacherAccounts 컬렉션은 반/학생처럼 자주 바뀌는 데이터가 아니라 원장님만 관리하는
+     계정 목록이므로, 위의 diff 동기화와는 분리된 별도 state로 둔다. 계정 생성은
+     "보조 Firebase 앱" 기법을 쓴다 — createUserWithEmailAndPassword를 그냥 호출하면
+     로그인 세션이 새로 만든 선생님 계정으로 바뀌어버리므로(원장님이 로그아웃되는 효과),
+     임시로 하나 더 띄운 Firebase 앱 인스턴스에서 계정을 만들고 바로 정리한다. */
+  const [teacherAccounts, setTeacherAccounts] = useState([]);
+  useEffect(() => {
+    if (!fbReady || !fbDb || !fbAuth || !fbAuth.currentUser) return;
+    return fbDb.collection('teacherAccounts').onSnapshot(
+      snap => setTeacherAccounts(snap.docs.map(d => ({ uid: d.id, ...d.data() }))),
+      e => console.error('teacherAccounts 동기화 오류', e)
+    );
+  }, [fbReady, fbAuth && fbAuth.currentUser && fbAuth.currentUser.uid]);
+
+  async function addTeacherAccount(name, email, password, classIds) {
+    const secondaryApp = firebase.initializeApp(firebaseConfig, 'teacher-create-' + Date.now());
+    try {
+      const cred = await secondaryApp.auth().createUserWithEmailAndPassword(email, password);
+      const uid = cred.user.uid;
+      await secondaryApp.auth().signOut();
+      await fbDb.collection('teacherAccounts').doc(uid).set({
+        email, name, classIds, role: 'teacher', createdAt: new Date().toISOString(),
+      });
+      return { ok: true };
+    } catch (e) {
+      const msg =
+        e.code === 'auth/email-already-in-use' ? '이미 사용 중인 이메일입니다.' :
+        e.code === 'auth/weak-password' ? '비밀번호는 6자 이상이어야 합니다.' :
+        e.code === 'auth/invalid-email' ? '이메일 형식이 올바르지 않습니다.' :
+        '계정 생성에 실패했습니다. (' + (e.message || e.code) + ')';
+      return { ok: false, error: msg };
+    } finally {
+      try { await secondaryApp.delete(); } catch (e) {}
+    }
+  }
+  function updateTeacherClassIds(uid, classIds) {
+    fbDb.collection('teacherAccounts').doc(uid).update({ classIds }).catch(e => console.error('선생님 담당 반 수정 실패', e));
+  }
+  function removeTeacherAccountDoc(uid) {
+    fbDb.collection('teacherAccounts').doc(uid).delete().catch(e => console.error('선생님 계정 삭제 실패', e));
+  }
+
   /* 알림톡 자동발송 없음: 모든 발송은 확인 패널에서 수신자·문구를 확인한 뒤
      수동으로만 이루어진다. */
 
@@ -3809,6 +3852,9 @@ function App({ currentUser } = {}) {
   const [vtFilterDate, setVtFilterDate] = useState(null);
   const [vtExpandedDates, setVtExpandedDates] = useState({}); // { [date]: true } — 전체 시험 기록 접기/펼치기
   const [examPatternOpen, setExamPatternOpen] = useState(false);
+  const [teacherAccountFormOpen, setTeacherAccountFormOpen] = useState(false);
+  const [teacherAccountBusy, setTeacherAccountBusy] = useState(false);
+  const [teacherAccountError, setTeacherAccountError] = useState('');
   const [scheduleMonth, setScheduleMonth] = useState(todayStr().slice(0, 7));
   const [scheduleSubTab, setScheduleSubTab] = useState('plan');
   const [scheduleShareFlash, setScheduleShareFlash] = useState('');
@@ -6584,6 +6630,63 @@ function App({ currentUser } = {}) {
           </div>
 
           <div>
+            <p className="text-sm font-medium text-gray-900 mb-2">👩‍🏫 선생님 계정 관리</p>
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              {!fbReady ? (
+                <p className="text-xs text-gray-500">Firebase 연동이 설정되어야 선생님 계정을 만들 수 있어요.</p>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-500 mb-3">
+                    여기서 만든 계정으로 선생님이 이 대시보드에 직접 로그인할 수 있어요. 담당 반은 나중에 화면·발송 권한을 반별로 제한할 때 쓰일 예정이에요(지금은 로그인만 가능하고, 전체 화면이 그대로 보여요).
+                  </p>
+                  <div className="space-y-2 mb-3">
+                    {teacherAccounts.length === 0 && <p className="text-xs text-gray-400">아직 추가한 선생님 계정이 없습니다.</p>}
+                    {teacherAccounts.map(t => (
+                      <div key={t.uid} className="bg-gray-50 border border-gray-200 rounded-lg p-2.5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm text-gray-800">{t.name} <span className="text-xs text-gray-400">({t.email})</span></p>
+                          </div>
+                          <button
+                            onClick={() => { if (confirm(t.name + ' 선생님 계정을 삭제할까요?\n\n(이 대시보드 접근 목록에서만 빠집니다. 로그인 자체를 완전히 막으려면 Firebase 콘솔 Authentication에서도 계정을 삭제/비활성화해주세요.)')) removeTeacherAccountDoc(t.uid); }}
+                            className="text-xs text-gray-400 hover:text-red-500"
+                          >삭제</button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {data.classes.filter(c => !c.archived).map(c => (
+                            <label key={c.id} className="flex items-center gap-1 text-[11px] bg-white border border-gray-200 rounded-full px-2 py-0.5">
+                              <input type="checkbox" checked={(t.classIds || []).includes(c.id)}
+                                onChange={e => updateTeacherClassIds(t.uid, e.target.checked ? [...(t.classIds || []), c.id] : (t.classIds || []).filter(id => id !== c.id))} />
+                              {c.name}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {teacherAccountFormOpen ? (
+                    <TeacherAccountForm
+                      classes={data.classes.filter(c => !c.archived)}
+                      busy={teacherAccountBusy}
+                      error={teacherAccountError}
+                      onCancel={() => { setTeacherAccountFormOpen(false); setTeacherAccountError(''); }}
+                      onSave={async (name, email, pw, classIds) => {
+                        setTeacherAccountBusy(true); setTeacherAccountError('');
+                        const r = await addTeacherAccount(name, email, pw, classIds);
+                        setTeacherAccountBusy(false);
+                        if (r.ok) setTeacherAccountFormOpen(false);
+                        else setTeacherAccountError(r.error);
+                      }}
+                    />
+                  ) : (
+                    <button onClick={() => setTeacherAccountFormOpen(true)} className="text-xs text-indigo-600 hover:underline">+ 선생님 계정 추가</button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          <div>
             <p className="text-sm font-medium text-gray-900 mb-2">외부 결제창 연동 (결제선생 등)</p>
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <p className="text-xs text-gray-500 mb-2">
@@ -7056,6 +7159,53 @@ function ExamPatternForm({ pattern, onSave, onClear }) {
       >저장</button>
       {pattern && <button onClick={onClear} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-500">끄기</button>}
       {pattern && <span className="text-[11px] text-indigo-600">다음 범위: {pattern.book ? pattern.book + ' ' : ''}{pattern.start}~{pattern.end}</span>}
+    </div>
+  );
+}
+
+/* 선생님 계정 추가 폼: 이름·이메일·비밀번호 + 담당 반 체크. */
+function TeacherAccountForm({ classes, onSave, onCancel, busy, error }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [classIds, setClassIds] = useState([]);
+  const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm';
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
+      <div>
+        <label className="text-xs text-gray-500 mb-1 block">이름</label>
+        <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="김선생" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-500 mb-1 block">이메일 (로그인 아이디)</label>
+        <input type="email" className={inputCls} value={email} onChange={e => setEmail(e.target.value)} placeholder="teacher@example.com" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-500 mb-1 block">초기 비밀번호 (6자 이상)</label>
+        <input type="password" className={inputCls} value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••" />
+      </div>
+      <div>
+        <label className="text-xs text-gray-500 mb-1 block">담당 반</label>
+        <div className="flex flex-wrap gap-2">
+          {classes.map(c => (
+            <label key={c.id} className="flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
+              <input type="checkbox" checked={classIds.includes(c.id)}
+                onChange={e => setClassIds(prev => e.target.checked ? [...prev, c.id] : prev.filter(id => id !== c.id))} />
+              {c.name}
+            </label>
+          ))}
+          {classes.length === 0 && <span className="text-xs text-gray-400">등록된 반이 없습니다.</span>}
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          disabled={busy || !name.trim() || !email.trim() || pw.length < 6}
+          onClick={() => onSave(name.trim(), email.trim(), pw, classIds)}
+          className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+        >{busy ? '만드는 중…' : '계정 만들기'}</button>
+        <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-500">취소</button>
+      </div>
     </div>
   );
 }

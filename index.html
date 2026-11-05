@@ -1779,7 +1779,7 @@ function App({ currentUser, teacherAccount } = {}) {
   const myClassIds = teacherAccount ? (teacherAccount.classIds || []) : null;
   // 학생 명단·출결·단어시험·학습리포트처럼 "학생 정보"를 보여주는 탭에서, 선생님
   // 계정은 담당 반 외 학생이 아예 안 보이게 한다(검색으로도 안 나옴).
-  const TEACHER_VISIBLE_TABS = ['home', 'directory', 'notice', 'academySchedule', 'schedule', 'attendance', 'vocabtest', 'report'];
+  const TEACHER_VISIBLE_TABS = ['home', 'directory', 'notice', 'academySchedule', 'schedule', 'attendance', 'vocabtest', 'report', 'counseling'];
   const [data, setData] = useState(loadData());
   const scopedClasses = isTeacherRole ? data.classes.filter(c => myClassIds.includes(c.id)) : data.classes;
   // 인적사항·출결·단어문법시험·학습리포트 탭 안에서만 쓰는, 담당 반으로 좁힌 데이터 뷰.
@@ -5177,18 +5177,23 @@ function App({ currentUser, teacherAccount } = {}) {
                   <input type="date" value={dailyReportDate} onChange={e => setDailyReportDate(e.target.value || todayStr())}
                     className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
                 </div>
-                <button
-                  onClick={openDailyReportConfirm}
-                  disabled={reportSendPending || !viewData.alimtalkProxyUrl}
-                  className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
-                >💬 카카오 알림톡 발송</button>
-                <button
-                  onClick={openDailyReportBulkConfirm}
-                  disabled={reportSendPending || !viewData.alimtalkProxyUrl}
-                  title="위에서 반을 선택했으면 그 반, 아니면 선택한 학생의 반 전체에게 각자의 데일리 리포트를 보냅니다"
-                  className="px-3.5 py-1.5 text-sm rounded-lg border border-yellow-400 text-yellow-800 font-medium hover:bg-yellow-50 disabled:opacity-50"
-                >📢 반 전체 발송</button>
-                {!viewData.alimtalkProxyUrl && <span className="text-xs text-gray-400">관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요</span>}
+                {!isTeacherRole && (
+                  <>
+                    <button
+                      onClick={openDailyReportConfirm}
+                      disabled={reportSendPending || !viewData.alimtalkProxyUrl}
+                      className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
+                    >💬 카카오 알림톡 발송</button>
+                    <button
+                      onClick={openDailyReportBulkConfirm}
+                      disabled={reportSendPending || !viewData.alimtalkProxyUrl}
+                      title="위에서 반을 선택했으면 그 반, 아니면 선택한 학생의 반 전체에게 각자의 데일리 리포트를 보냅니다"
+                      className="px-3.5 py-1.5 text-sm rounded-lg border border-yellow-400 text-yellow-800 font-medium hover:bg-yellow-50 disabled:opacity-50"
+                    >📢 반 전체 발송</button>
+                    {!viewData.alimtalkProxyUrl && <span className="text-xs text-gray-400">관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요</span>}
+                  </>
+                )}
+                {isTeacherRole && <span className="text-xs text-gray-400">알림톡 발송은 원장님만 할 수 있어요.</span>}
               </div>
               {(() => {
                 const v = buildDailyReportVars(viewData, reportData.student, dailyReportDate);
@@ -5223,11 +5228,15 @@ function App({ currentUser, teacherAccount } = {}) {
                     ))}
                   </select>
                 </div>
-                <button
-                  onClick={openMonthlyReportConfirm}
-                  disabled={reportSendPending || !viewData.alimtalkProxyUrl}
-                  className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
-                >💬 먼슬리 리포트 발송</button>
+                {!isTeacherRole ? (
+                  <button
+                    onClick={openMonthlyReportConfirm}
+                    disabled={reportSendPending || !viewData.alimtalkProxyUrl}
+                    className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
+                  >💬 먼슬리 리포트 발송</button>
+                ) : (
+                  <span className="text-xs text-gray-400">알림톡 발송은 원장님만 할 수 있어요.</span>
+                )}
               </div>
               {(() => {
                 const info = buildMonthlyReportInfo(viewData, reportData.student, monthlyReportMonth);
@@ -5433,15 +5442,18 @@ function App({ currentUser, teacherAccount } = {}) {
                 <button onClick={saveComment} className="flex-1 py-2 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50">
                   리포트 저장
                 </button>
-                <button
-                  onClick={openReportAlimtalkConfirm}
-                  disabled={(!reportData.student.parentPhone && !reportData.student.studentPhone) || !viewData.alimtalkProxyUrl || reportSendPending}
-                  title={(!reportData.student.parentPhone && !reportData.student.studentPhone) ? '학부모/학생 연락처가 없습니다' : (!viewData.alimtalkProxyUrl ? '관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요' : '')}
-                  className={`flex-1 py-2 text-sm rounded-lg border ${((!reportData.student.parentPhone && !reportData.student.studentPhone) || !viewData.alimtalkProxyUrl || reportSendPending) ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-                >
-                  {reportSendPending ? '발송 중...' : '카카오 알림톡 발송'}
-                </button>
+                {!isTeacherRole && (
+                  <button
+                    onClick={openReportAlimtalkConfirm}
+                    disabled={(!reportData.student.parentPhone && !reportData.student.studentPhone) || !viewData.alimtalkProxyUrl || reportSendPending}
+                    title={(!reportData.student.parentPhone && !reportData.student.studentPhone) ? '학부모/학생 연락처가 없습니다' : (!viewData.alimtalkProxyUrl ? '관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요' : '')}
+                    className={`flex-1 py-2 text-sm rounded-lg border ${((!reportData.student.parentPhone && !reportData.student.studentPhone) || !viewData.alimtalkProxyUrl || reportSendPending) ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    {reportSendPending ? '발송 중...' : '카카오 알림톡 발송'}
+                  </button>
+                )}
               </div>
+              {isTeacherRole && <p className="text-xs text-gray-400 mt-2">알림톡 발송은 원장님만 할 수 있어요. 코멘트는 저장해두시면 원장님이 이어서 발송할 수 있어요.</p>}
               {reportSendSuccessFlash && <p className="text-xs text-green-600 mt-2">카카오 알림톡으로 발송했어요.</p>}
               {reportSendError && <p className="text-xs text-red-500 mt-2">{reportSendError}</p>}
 
@@ -5616,10 +5628,14 @@ function App({ currentUser, teacherAccount } = {}) {
                   <p className="text-sm font-medium text-yellow-800">
                     ⚠ 재시험 필요 {pending.length}명{dueSoon.length > 0 ? ` · 안내 발송 대상 ${dueSoon.length}명` : ''}
                   </p>
-                  <button onClick={openRetestNoticeConfirm} disabled={retestNoticePending || dueSoon.length === 0}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-yellow-600 text-white disabled:opacity-50">
-                    {retestNoticePending ? '발송 중...' : '재시험 안내 발송'}
-                  </button>
+                  {isTeacherRole ? (
+                    <span className="text-xs text-gray-400">안내 발송은 원장님만 할 수 있어요.</span>
+                  ) : (
+                    <button onClick={openRetestNoticeConfirm} disabled={retestNoticePending || dueSoon.length === 0}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-yellow-600 text-white disabled:opacity-50">
+                      {retestNoticePending ? '발송 중...' : '재시험 안내 발송'}
+                    </button>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   {pending.map(p => (
@@ -5797,6 +5813,8 @@ function App({ currentUser, teacherAccount } = {}) {
                 <span className="text-xs text-gray-400">{a.date}</span>
                 {a.sentAt ? (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">알림톡 발송됨 ({a.sentCount}명, {a.sentAt})</span>
+                ) : isTeacherRole ? (
+                  <span className="text-xs text-gray-400">알림톡 발송은 원장님만 할 수 있어요.</span>
                 ) : (
                   <button onClick={() => openNoticeAlimtalkConfirm(a.id)} className="text-xs text-indigo-600 hover:underline">
                     {noticeSendPending[a.id] ? '발송 중...' : '카카오 알림톡 발송'}

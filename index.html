@@ -21,13 +21,16 @@
      사라지므로, 배경색(그래프)을 강제로 출력하게 한다. */
   @media print {
     body * { visibility: hidden; }
-    #reportPrintArea, #reportPrintArea * {
+    #reportPrintArea, #reportPrintArea *,
+    #examRangePrintArea, #examRangePrintArea * {
       visibility: visible;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
     #reportPrintArea { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; }
     #reportPrintArea .report-tools, #reportPrintArea .report-actions { display: none !important; }
+    #examRangePrintArea { position: absolute; left: 0; top: 0; width: 100%; }
+    #examRangePrintArea .no-print { display: none !important; }
   }
 </style>
 
@@ -1633,12 +1636,17 @@ const VOCAB_TEST_TYPES = ['단어시험', '문법 복습시험'];
 
 // 시험범위 자동생성 패턴: 반(또는 학생 개별)마다 책/시작범위/스텝을 정해두면
 // 수업일마다 그 범위가 자동으로 이어서 채워진다.
-// - rolling(되풀이): 범위 전체가 step만큼 앞으로 밀려남 (예: 1~10 → 11~20)
+// - rolling(되풀이): 범위 전체가 step만큼 앞으로 밀려남 (예: 1~10 → 11~20).
+//   step이 범위 크기보다 작으면 겹치면서 하루치씩 밀리는 것도 표현된다(예: 1~2 → 2~3 → 3~4).
 // - cumulative(누적): 시작점은 고정, 끝만 step만큼 늘어남 (예: 1~10 → 1~15)
+// - capEnd(선택): 정해두면 끝이 그 값을 넘지 않는다(예: 교재가 day 15까지만 있을 때).
 function advanceExamPattern(pattern) {
   const step = pattern.step || 1;
-  if (pattern.mode === 'cumulative') return { ...pattern, end: pattern.end + step };
-  return { ...pattern, start: pattern.start + step, end: pattern.end + step };
+  const next = pattern.mode === 'cumulative'
+    ? { ...pattern, end: pattern.end + step }
+    : { ...pattern, start: pattern.start + step, end: pattern.end + step };
+  if (pattern.capEnd && next.end > pattern.capEnd) next.end = pattern.capEnd;
+  return next;
 }
 
 // 학생 개별 설정이 있으면 그걸 우선하고, 없으면 반 전체 설정을 쓴다.
@@ -2388,6 +2396,25 @@ function App({ currentUser, teacherAccount } = {}) {
     setData(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       if (next.examPatterns?.classes?.[classId]) delete next.examPatterns.classes[classId][testType];
+      return next;
+    });
+  }
+
+  // 학생 개별 시험범위 설정 — 있으면 반 기본값보다 우선 적용된다(getExamPattern 참고).
+  function setStudentExamPattern(studentId, testType, patch) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next.examPatterns) next.examPatterns = { classes: {}, students: {} };
+      if (!next.examPatterns.students[studentId]) next.examPatterns.students[studentId] = {};
+      next.examPatterns.students[studentId][testType] = { mode: 'rolling', step: 1, anchorDate: todayStr(), book: '', ...patch };
+      return next;
+    });
+  }
+
+  function clearStudentExamPattern(studentId, testType) {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (next.examPatterns?.students?.[studentId]) delete next.examPatterns.students[studentId][testType];
       return next;
     });
   }
@@ -3884,6 +3911,8 @@ function App({ currentUser, teacherAccount } = {}) {
   const [vtFilterDate, setVtFilterDate] = useState(null);
   const [vtExpandedDates, setVtExpandedDates] = useState({}); // { [date]: true } — 전체 시험 기록 접기/펼치기
   const [examPatternOpen, setExamPatternOpen] = useState(false);
+  const [examPatternStudentOpen, setExamPatternStudentOpen] = useState({}); // { [studentId]: true }
+  const [examRangePrintOpen, setExamRangePrintOpen] = useState(false); // 오늘 전체 시험범위 미리보기/인쇄 팝업
   const [approvalWizardFor, setApprovalWizardFor] = useState(null); // uid | null
   const [approvalFlash, setApprovalFlash] = useState(''); // 승인 완료 안내 메시지
   const [scheduleMonth, setScheduleMonth] = useState(todayStr().slice(0, 7));
@@ -5530,34 +5559,85 @@ function App({ currentUser, teacherAccount } = {}) {
             <EmptyState text="오늘 예정된 수업이 없습니다." />
           ) : (
             <React.Fragment>
-              <div className="flex gap-2 mb-1 overflow-x-auto pb-1">
-                {todayClasses.map(c => (
-                  <button key={c.id} onClick={() => setSelectedClassId(c.id)}
-                    className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-sm border ${selectedClassId===c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'}`}>
-                    {formatClassTimeForDay(c, weekday)} {c.name}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {todayClasses.map(c => (
+                    <button key={c.id} onClick={() => setSelectedClassId(c.id)}
+                      className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-sm border ${selectedClassId===c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'}`}>
+                      {formatClassTimeForDay(c, weekday)} {c.name}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setExamRangePrintOpen(true)} className="text-xs px-2.5 py-1.5 rounded-lg border border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-50 shrink-0">
+                  🖨 오늘 전체 시험범위 보기/인쇄
+                </button>
               </div>
               <ReadOnlyNotice tabKey="vocabtest" />
               <fieldset disabled={!tabWritable('vocabtest')} className="border-0 p-0 m-0 min-w-0">
               {selectedClassId && (
                 <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3 mb-3">
                   <button onClick={() => setExamPatternOpen(v => !v)} className="text-xs font-semibold text-indigo-700">
-                    {examPatternOpen ? '▾' : '▸'} 📐 시험범위 자동생성 설정 (이 반)
+                    {examPatternOpen ? '▾' : '▸'} 📐 시험범위 자동생성 설정 (반 기본값 + 학생별 개별 설정)
                   </button>
                   {examPatternOpen && (
-                    <div className="mt-2 space-y-2">
-                      {VOCAB_TEST_TYPES.map(testType => (
-                        <div key={testType} className="bg-white rounded-lg p-2.5 border border-gray-100">
-                          <p className="text-xs font-medium text-gray-600 mb-1.5">{testType}</p>
-                          <ExamPatternForm
-                            pattern={viewData.examPatterns?.classes?.[selectedClassId]?.[testType] || null}
-                            onSave={patch => setClassExamPattern(selectedClassId, testType, patch)}
-                            onClear={() => clearClassExamPattern(selectedClassId, testType)}
-                          />
+                    <div className="mt-2 space-y-3">
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 mb-1.5">반 기본값 (개별 설정이 없는 학생에게 적용)</p>
+                        <div className="space-y-2">
+                          {VOCAB_TEST_TYPES.map(testType => (
+                            <div key={testType} className="bg-white rounded-lg p-2.5 border border-gray-100">
+                              <p className="text-xs font-medium text-gray-600 mb-1.5">{testType}</p>
+                              <ExamPatternForm
+                                pattern={viewData.examPatterns?.classes?.[selectedClassId]?.[testType] || null}
+                                onSave={patch => setClassExamPattern(selectedClassId, testType, patch)}
+                                onClear={() => clearClassExamPattern(selectedClassId, testType)}
+                              />
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                      <p className="text-[11px] text-gray-400">책/시작 범위를 정해두면 수업일마다 범위가 자동으로 이어져요. "되풀이"는 범위 전체가 앞으로 밀리고(1~10 → 11~20), "누적"은 시작은 그대로 두고 끝만 늘어나요(1~10 → 1~15).</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 mb-1.5">학생별 개별 설정 — 학생마다 하루치/이틀치 등 범위 크기나 방식이 다르면 여기서 따로 정하세요</p>
+                        <div className="space-y-1.5">
+                          {viewData.classes.find(c => c.id === selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
+                            const open = !!examPatternStudentOpen[s.id];
+                            const hasAnyOverride = VOCAB_TEST_TYPES.some(tt => viewData.examPatterns?.students?.[s.id]?.[tt]);
+                            return (
+                              <div key={s.id} className="bg-white rounded-lg border border-gray-100">
+                                <button
+                                  onClick={() => setExamPatternStudentOpen(prev => ({ ...prev, [s.id]: !prev[s.id] }))}
+                                  className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs text-gray-700"
+                                >
+                                  <span>{open ? '▾' : '▸'} {s.name}</span>
+                                  <span className={hasAnyOverride ? 'text-indigo-600 font-medium' : 'text-gray-400'}>
+                                    {hasAnyOverride ? '개별 설정 중' : '반 기본값 따름'}
+                                  </span>
+                                </button>
+                                {open && (
+                                  <div className="px-2.5 pb-2.5 space-y-2">
+                                    {VOCAB_TEST_TYPES.map(testType => {
+                                      const override = viewData.examPatterns?.students?.[s.id]?.[testType] || null;
+                                      const effective = override || viewData.examPatterns?.classes?.[selectedClassId]?.[testType] || null;
+                                      return (
+                                        <div key={testType} className="bg-gray-50 rounded-lg p-2 border border-gray-100">
+                                          <p className="text-[11px] font-medium text-gray-500 mb-1">{testType}</p>
+                                          <ExamPatternForm
+                                            pattern={effective}
+                                            inherited={!override && !!effective}
+                                            onSave={patch => setStudentExamPattern(s.id, testType, patch)}
+                                            onClear={() => clearStudentExamPattern(s.id, testType)}
+                                          />
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-gray-400">책/시작 범위를 정해두면 수업일마다 범위가 자동으로 이어져요. "되풀이"는 범위 전체가 앞으로 밀리고(step을 범위보다 작게 하면 1~2 → 2~3처럼 겹치며 하루치씩 밀리는 것도 가능), "누적"은 시작은 그대로 두고 끝만 늘어나요(1~2 → 1~3 → 1~4). "최대"를 정해두면 거기서 더 안 늘어나요.</p>
                     </div>
                   )}
                 </div>
@@ -5828,6 +5908,60 @@ function App({ currentUser, teacherAccount } = {}) {
           </fieldset>
         </div>
       )}
+
+      {examRangePrintOpen && (() => {
+        const rows = [];
+        todayClasses.forEach(c => {
+          c.students.filter(s => isActiveStudent(s, date)).forEach(s => {
+            VOCAB_TEST_TYPES.forEach(testType => {
+              const v = getVocabTest(viewData, s.id, date, testType);
+              if (v && v.range && (v.range.book || v.range.start)) rows.push({ className: c.name, studentName: s.name, testType, range: v.range });
+            });
+          });
+        });
+        rows.sort((a, b) => a.className.localeCompare(b.className, 'ko') || a.studentName.localeCompare(b.studentName, 'ko'));
+        return (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setExamRangePrintOpen(false)}>
+            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl max-w-xl w-full max-h-[85vh] overflow-y-auto">
+              <div id="examRangePrintArea" className="p-5">
+                <div className="flex items-center justify-between mb-3 no-print">
+                  <p className="text-sm font-semibold text-gray-900">오늘 전체 시험범위</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => window.print()} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white">🖨 인쇄</button>
+                    <button onClick={() => setExamRangePrintOpen(false)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600">닫기</button>
+                  </div>
+                </div>
+                <p className="text-base font-bold text-gray-900">{data.academyName}</p>
+                <p className="text-xs text-gray-500 mb-3">{mdLabel(date)} ({weekday}) · 단어/문법시험 범위</p>
+                {rows.length === 0 ? (
+                  <p className="text-sm text-gray-400">오늘 생성된 시험 범위가 없습니다. (반/학생에 시험범위 자동생성 설정이 안 되어 있으면 범위 없이 생성돼요)</p>
+                ) : (
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="text-xs text-gray-500 border-b-2 border-gray-300">
+                        <th className="text-left py-1.5 pr-2">반</th>
+                        <th className="text-left py-1.5 pr-2">학생</th>
+                        <th className="text-left py-1.5 pr-2">시험</th>
+                        <th className="text-left py-1.5">범위</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i} className="border-b border-gray-100 last:border-0">
+                          <td className="py-1.5 pr-2 text-gray-500">{r.className}</td>
+                          <td className="py-1.5 pr-2 font-medium text-gray-800">{r.studentName}</td>
+                          <td className="py-1.5 pr-2 text-gray-600">{r.testType}</td>
+                          <td className="py-1.5 text-indigo-700 font-semibold">{r.range.book ? r.range.book + ' ' : ''}{r.range.start}~{r.range.end}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {tab === 'notice' && (
         <div className="space-y-3">
@@ -7303,16 +7437,20 @@ function EmptyState({ text }) {
 
 /* 반(또는 학생 개별)의 시험범위 자동생성 패턴을 입력하는 폼.
    pattern이 null이면 "꺼짐" 상태 — 저장하면 새로 켜진다. */
-function ExamPatternForm({ pattern, onSave, onClear }) {
+function ExamPatternForm({ pattern, onSave, onClear, inherited }) {
   const [f, setF] = useState({
     book: pattern?.book || '',
     start: pattern?.start ?? '',
     end: pattern?.end ?? '',
     step: pattern?.step ?? 1,
     mode: pattern?.mode || 'rolling',
+    capEnd: pattern?.capEnd ?? '',
   });
   useEffect(() => {
-    setF({ book: pattern?.book || '', start: pattern?.start ?? '', end: pattern?.end ?? '', step: pattern?.step ?? 1, mode: pattern?.mode || 'rolling' });
+    setF({
+      book: pattern?.book || '', start: pattern?.start ?? '', end: pattern?.end ?? '',
+      step: pattern?.step ?? 1, mode: pattern?.mode || 'rolling', capEnd: pattern?.capEnd ?? '',
+    });
   }, [pattern]);
   const inputCls = 'border border-gray-300 rounded-lg px-2 py-1 text-xs';
   return (
@@ -7325,19 +7463,28 @@ function ExamPatternForm({ pattern, onSave, onClear }) {
         step <input className={inputCls + ' w-12'} type="number" value={f.step} onChange={e => setF({ ...f, step: e.target.value })} />
       </label>
       <select className={inputCls} value={f.mode} onChange={e => setF({ ...f, mode: e.target.value })}>
-        <option value="rolling">되풀이(매번 새 범위)</option>
-        <option value="cumulative">누적(시작 고정)</option>
+        <option value="rolling">되풀이(매번 새 범위, 겹치게도 가능)</option>
+        <option value="cumulative">누적(시작 고정, 끝만 늘어남)</option>
       </select>
+      <label className="flex items-center gap-1 text-[11px] text-gray-400" title="정해두면 끝이 이 값을 넘지 않아요 (예: 교재가 15과까지만 있을 때)">
+        최대<input className={inputCls + ' w-12'} type="number" placeholder="없음" value={f.capEnd} onChange={e => setF({ ...f, capEnd: e.target.value })} />
+      </label>
       <button
         onClick={() => {
           const start = parseInt(f.start, 10), end = parseInt(f.end, 10), step = parseInt(f.step, 10) || 1;
+          const capEnd = f.capEnd === '' ? undefined : parseInt(f.capEnd, 10);
           if (isNaN(start) || isNaN(end)) { alert('시작/끝 범위를 숫자로 입력해주세요.'); return; }
-          onSave({ book: f.book.trim(), start, end, step, mode: f.mode });
+          onSave({ book: f.book.trim(), start, end, step, mode: f.mode, ...(capEnd !== undefined && !isNaN(capEnd) ? { capEnd } : {}) });
         }}
         className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white"
       >저장</button>
-      {pattern && <button onClick={onClear} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-500">끄기</button>}
-      {pattern && <span className="text-[11px] text-indigo-600">다음 범위: {pattern.book ? pattern.book + ' ' : ''}{pattern.start}~{pattern.end}</span>}
+      {pattern && !inherited && <button onClick={onClear} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-500">끄기</button>}
+      {pattern && (
+        <span className="text-[11px] text-indigo-600">
+          다음 범위: {pattern.book ? pattern.book + ' ' : ''}{pattern.start}~{pattern.end}{pattern.capEnd ? ` (최대 ${pattern.capEnd})` : ''}
+          {inherited ? ' · 반 기본값' : ''}
+        </span>
+      )}
     </div>
   );
 }

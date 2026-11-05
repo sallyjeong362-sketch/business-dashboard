@@ -2243,10 +2243,11 @@ function App({ currentUser } = {}) {
 
   /* ---- 선생님 계정 관리 ----
      teacherAccounts 컬렉션은 반/학생처럼 자주 바뀌는 데이터가 아니라 원장님만 관리하는
-     계정 목록이므로, 위의 diff 동기화와는 분리된 별도 state로 둔다. 계정 생성은
-     "보조 Firebase 앱" 기법을 쓴다 — createUserWithEmailAndPassword를 그냥 호출하면
-     로그인 세션이 새로 만든 선생님 계정으로 바뀌어버리므로(원장님이 로그아웃되는 효과),
-     임시로 하나 더 띄운 Firebase 앱 인스턴스에서 계정을 만들고 바로 정리한다. */
+     계정 목록이므로, 위의 diff 동기화와는 분리된 별도 state로 둔다. 선생님이 로그인
+     화면에서 직접 가입하면(비밀번호도 본인이 정함) status:'pending' 문서가 생기고,
+     원장님이 여기서 승인(approved)/거절(rejected)한다. 거절이나 접근 차단은 문서를
+     지우지 않고 status만 바꾼다 — 문서가 아예 없으면 "원장님 계정"으로 간주하는
+     규칙이 있어서, 지워버리면 다시 로그인했을 때 오히려 전체 권한을 얻게 된다. */
   const [teacherAccounts, setTeacherAccounts] = useState([]);
   useEffect(() => {
     if (!fbReady || !fbDb || !fbAuth || !fbAuth.currentUser) return;
@@ -2256,32 +2257,11 @@ function App({ currentUser } = {}) {
     );
   }, [fbReady, fbAuth && fbAuth.currentUser && fbAuth.currentUser.uid]);
 
-  async function addTeacherAccount(name, email, password, classIds) {
-    const secondaryApp = firebase.initializeApp(firebaseConfig, 'teacher-create-' + Date.now());
-    try {
-      const cred = await secondaryApp.auth().createUserWithEmailAndPassword(email, password);
-      const uid = cred.user.uid;
-      await secondaryApp.auth().signOut();
-      await fbDb.collection('teacherAccounts').doc(uid).set({
-        email, name, classIds, role: 'teacher', createdAt: new Date().toISOString(),
-      });
-      return { ok: true };
-    } catch (e) {
-      const msg =
-        e.code === 'auth/email-already-in-use' ? '이미 사용 중인 이메일입니다.' :
-        e.code === 'auth/weak-password' ? '비밀번호는 6자 이상이어야 합니다.' :
-        e.code === 'auth/invalid-email' ? '이메일 형식이 올바르지 않습니다.' :
-        '계정 생성에 실패했습니다. (' + (e.message || e.code) + ')';
-      return { ok: false, error: msg };
-    } finally {
-      try { await secondaryApp.delete(); } catch (e) {}
-    }
+  function setTeacherAccountStatus(uid, status) {
+    fbDb.collection('teacherAccounts').doc(uid).update({ status }).catch(e => console.error('선생님 계정 상태 변경 실패', e));
   }
   function updateTeacherClassIds(uid, classIds) {
     fbDb.collection('teacherAccounts').doc(uid).update({ classIds }).catch(e => console.error('선생님 담당 반 수정 실패', e));
-  }
-  function removeTeacherAccountDoc(uid) {
-    fbDb.collection('teacherAccounts').doc(uid).delete().catch(e => console.error('선생님 계정 삭제 실패', e));
   }
 
   /* 알림톡 자동발송 없음: 모든 발송은 확인 패널에서 수신자·문구를 확인한 뒤
@@ -3852,9 +3832,6 @@ function App({ currentUser } = {}) {
   const [vtFilterDate, setVtFilterDate] = useState(null);
   const [vtExpandedDates, setVtExpandedDates] = useState({}); // { [date]: true } — 전체 시험 기록 접기/펼치기
   const [examPatternOpen, setExamPatternOpen] = useState(false);
-  const [teacherAccountFormOpen, setTeacherAccountFormOpen] = useState(false);
-  const [teacherAccountBusy, setTeacherAccountBusy] = useState(false);
-  const [teacherAccountError, setTeacherAccountError] = useState('');
   const [scheduleMonth, setScheduleMonth] = useState(todayStr().slice(0, 7));
   const [scheduleSubTab, setScheduleSubTab] = useState('plan');
   const [scheduleShareFlash, setScheduleShareFlash] = useState('');
@@ -6633,24 +6610,43 @@ function App({ currentUser } = {}) {
             <p className="text-sm font-medium text-gray-900 mb-2">👩‍🏫 선생님 계정 관리</p>
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               {!fbReady ? (
-                <p className="text-xs text-gray-500">Firebase 연동이 설정되어야 선생님 계정을 만들 수 있어요.</p>
+                <p className="text-xs text-gray-500">Firebase 연동이 설정되어야 선생님 계정을 관리할 수 있어요.</p>
               ) : (
                 <>
                   <p className="text-xs text-gray-500 mb-3">
-                    여기서 만든 계정으로 선생님이 이 대시보드에 직접 로그인할 수 있어요. 담당 반은 나중에 화면·발송 권한을 반별로 제한할 때 쓰일 예정이에요(지금은 로그인만 가능하고, 전체 화면이 그대로 보여요).
+                    선생님이 로그인 화면에서 직접 가입해요(비밀번호도 본인이 정해요 — 원장님이 알 필요 없어요). 아래에서 승인하면 바로 이용할 수 있어요. 담당 반은 나중에 화면·발송 권한을 반별로 제한할 때 쓰일 예정이에요(지금은 승인만 되면 전체 화면이 그대로 보여요).
                   </p>
-                  <div className="space-y-2 mb-3">
-                    {teacherAccounts.length === 0 && <p className="text-xs text-gray-400">아직 추가한 선생님 계정이 없습니다.</p>}
-                    {teacherAccounts.map(t => (
+
+                  {teacherAccounts.filter(t => t.status === 'pending').length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-semibold text-yellow-700 mb-1.5">⏳ 승인 대기 중</p>
+                      <div className="space-y-2">
+                        {teacherAccounts.filter(t => t.status === 'pending').map(t => (
+                          <div key={t.uid} className="bg-yellow-50 border border-yellow-200 rounded-lg p-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm text-gray-800">{t.name} <span className="text-xs text-gray-400">({t.email})</span></p>
+                              <div className="flex gap-1.5 shrink-0">
+                                <button onClick={() => setTeacherAccountStatus(t.uid, 'approved')} className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white">승인</button>
+                                <button onClick={() => { if (confirm(t.name + ' 가입 요청을 거절할까요?')) setTeacherAccountStatus(t.uid, 'rejected'); }} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-500">거절</button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-500 mb-1.5">활성 계정</p>
+                    {teacherAccounts.filter(t => t.status === 'approved').length === 0 && <p className="text-xs text-gray-400">아직 승인된 선생님 계정이 없습니다.</p>}
+                    {teacherAccounts.filter(t => t.status === 'approved').map(t => (
                       <div key={t.uid} className="bg-gray-50 border border-gray-200 rounded-lg p-2.5">
                         <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm text-gray-800">{t.name} <span className="text-xs text-gray-400">({t.email})</span></p>
-                          </div>
+                          <p className="text-sm text-gray-800">{t.name} <span className="text-xs text-gray-400">({t.email})</span></p>
                           <button
-                            onClick={() => { if (confirm(t.name + ' 선생님 계정을 삭제할까요?\n\n(이 대시보드 접근 목록에서만 빠집니다. 로그인 자체를 완전히 막으려면 Firebase 콘솔 Authentication에서도 계정을 삭제/비활성화해주세요.)')) removeTeacherAccountDoc(t.uid); }}
+                            onClick={() => { if (confirm(t.name + ' 선생님의 접근을 차단할까요? (다시 승인하면 바로 복구돼요)')) setTeacherAccountStatus(t.uid, 'rejected'); }}
                             className="text-xs text-gray-400 hover:text-red-500"
-                          >삭제</button>
+                          >접근 차단</button>
                         </div>
                         <div className="flex flex-wrap gap-1.5 mt-1.5">
                           {data.classes.filter(c => !c.archived).map(c => (
@@ -6664,22 +6660,19 @@ function App({ currentUser } = {}) {
                       </div>
                     ))}
                   </div>
-                  {teacherAccountFormOpen ? (
-                    <TeacherAccountForm
-                      classes={data.classes.filter(c => !c.archived)}
-                      busy={teacherAccountBusy}
-                      error={teacherAccountError}
-                      onCancel={() => { setTeacherAccountFormOpen(false); setTeacherAccountError(''); }}
-                      onSave={async (name, email, pw, classIds) => {
-                        setTeacherAccountBusy(true); setTeacherAccountError('');
-                        const r = await addTeacherAccount(name, email, pw, classIds);
-                        setTeacherAccountBusy(false);
-                        if (r.ok) setTeacherAccountFormOpen(false);
-                        else setTeacherAccountError(r.error);
-                      }}
-                    />
-                  ) : (
-                    <button onClick={() => setTeacherAccountFormOpen(true)} className="text-xs text-indigo-600 hover:underline">+ 선생님 계정 추가</button>
+
+                  {teacherAccounts.filter(t => t.status === 'rejected').length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold text-gray-400 mb-1.5">차단된 계정</p>
+                      <div className="space-y-1.5">
+                        {teacherAccounts.filter(t => t.status === 'rejected').map(t => (
+                          <div key={t.uid} className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+                            <p className="text-xs text-gray-500">{t.name} ({t.email})</p>
+                            <button onClick={() => setTeacherAccountStatus(t.uid, 'approved')} className="text-xs text-indigo-600 hover:underline">다시 승인</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </>
               )}
@@ -7163,53 +7156,6 @@ function ExamPatternForm({ pattern, onSave, onClear }) {
   );
 }
 
-/* 선생님 계정 추가 폼: 이름·이메일·비밀번호 + 담당 반 체크. */
-function TeacherAccountForm({ classes, onSave, onCancel, busy, error }) {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [pw, setPw] = useState('');
-  const [classIds, setClassIds] = useState([]);
-  const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm';
-  return (
-    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">이름</label>
-        <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="김선생" />
-      </div>
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">이메일 (로그인 아이디)</label>
-        <input type="email" className={inputCls} value={email} onChange={e => setEmail(e.target.value)} placeholder="teacher@example.com" />
-      </div>
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">초기 비밀번호 (6자 이상)</label>
-        <input type="password" className={inputCls} value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••" />
-      </div>
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">담당 반</label>
-        <div className="flex flex-wrap gap-2">
-          {classes.map(c => (
-            <label key={c.id} className="flex items-center gap-1 text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
-              <input type="checkbox" checked={classIds.includes(c.id)}
-                onChange={e => setClassIds(prev => e.target.checked ? [...prev, c.id] : prev.filter(id => id !== c.id))} />
-              {c.name}
-            </label>
-          ))}
-          {classes.length === 0 && <span className="text-xs text-gray-400">등록된 반이 없습니다.</span>}
-        </div>
-      </div>
-      {error && <p className="text-xs text-red-600">{error}</p>}
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          disabled={busy || !name.trim() || !email.trim() || pw.length < 6}
-          onClick={() => onSave(name.trim(), email.trim(), pw, classIds)}
-          className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white disabled:opacity-50"
-        >{busy ? '만드는 중…' : '계정 만들기'}</button>
-        <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-500">취소</button>
-      </div>
-    </div>
-  );
-}
-
 /* 학생 정보 전체를 한 화면에서 입력하는 폼 (인적사항·반 관리 공용).
    classes를 넘기면 "소속 반" 체크 목록이 함께 나와 반 배정까지 한 번에 관리한다. */
 function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, onCancel }) {
@@ -7575,8 +7521,17 @@ function SharedReportView({ r }) {
    접근 못 하도록 로그인(이메일/비밀번호)을 먼저 거치게 한다. 선생님 계정은 지금은
    샐리 원장님이 Firebase 콘솔 Authentication에서 직접 추가한다(관리 화면은 다음 단계).
    Firebase 설정이 안 된 상태(fbReady=false)면 예전처럼 로그인 없이 그대로 동작한다. */
+/* 가입 흐름: 선생님이 직접 이름/이메일/비밀번호로 한 번 가입하면(각자 비밀번호를 직접
+   정하므로 원장님이 비밀번호를 알거나 정해줄 필요가 없다), teacherAccounts 문서가
+   status:'pending'으로 만들어진다. 관리자 탭에서 원장님이 "승인"을 눌러야(status:'approved')
+   실제로 대시보드를 쓸 수 있다 — 그전까지는 "승인 대기 중" 화면만 보인다.
+   teacherAccounts 문서가 아예 없는 계정(원장님처럼 Firebase 콘솔에서 직접 만든 계정)은
+   계정 관리 화면이 아직 없던 시절과 동일하게 그냥 전체 접근을 허용한다(원장님 본인 계정). */
 function AuthGate() {
   const [user, setUser] = useState(fbReady ? undefined : null); // undefined=확인중, null=비로그인
+  const [teacherDoc, setTeacherDoc] = useState(undefined); // undefined=확인중, null=문서 없음(=원장님 취급)
+  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
   const [err, setErr] = useState('');
@@ -7584,8 +7539,16 @@ function AuthGate() {
 
   useEffect(() => {
     if (!fbReady || !fbAuth) return;
-    return fbAuth.onAuthStateChanged(u => setUser(u));
+    return fbAuth.onAuthStateChanged(u => { setUser(u); setTeacherDoc(undefined); });
   }, []);
+
+  useEffect(() => {
+    if (!fbReady || !fbDb || !user) return;
+    return fbDb.collection('teacherAccounts').doc(user.uid).onSnapshot(
+      doc => setTeacherDoc(doc.exists ? doc.data() : null),
+      e => { console.error('teacherAccounts 조회 오류', e); setTeacherDoc(null); }
+    );
+  }, [fbReady, user && user.uid]);
 
   if (!fbReady) return <App />;
   if (user === undefined) {
@@ -7599,12 +7562,23 @@ function AuthGate() {
             e.preventDefault();
             setErr(''); setBusy(true);
             try {
-              await fbAuth.signInWithEmailAndPassword(email.trim(), pw);
+              if (mode === 'login') {
+                await fbAuth.signInWithEmailAndPassword(email.trim(), pw);
+              } else {
+                if (!name.trim()) throw { code: 'custom/name-required' };
+                const cred = await fbAuth.createUserWithEmailAndPassword(email.trim(), pw);
+                await fbDb.collection('teacherAccounts').doc(cred.user.uid).set({
+                  email: email.trim(), name: name.trim(), classIds: [], role: 'teacher', status: 'pending',
+                  createdAt: new Date().toISOString(),
+                });
+              }
             } catch (e2) {
               setErr(
-                e2.code === 'auth/invalid-credential' || e2.code === 'auth/wrong-password' || e2.code === 'auth/user-not-found'
-                  ? '이메일 또는 비밀번호가 올바르지 않습니다.'
-                  : '로그인에 실패했습니다. (' + (e2.message || e2.code) + ')'
+                e2.code === 'auth/invalid-credential' || e2.code === 'auth/wrong-password' || e2.code === 'auth/user-not-found' ? '이메일 또는 비밀번호가 올바르지 않습니다.' :
+                e2.code === 'auth/email-already-in-use' ? '이미 가입된 이메일입니다. 로그인해주세요.' :
+                e2.code === 'auth/weak-password' ? '비밀번호는 6자 이상이어야 합니다.' :
+                e2.code === 'custom/name-required' ? '이름을 입력해주세요.' :
+                (mode === 'login' ? '로그인에 실패했습니다.' : '가입에 실패했습니다.') + ' (' + (e2.message || e2.code) + ')'
               );
             }
             setBusy(false);
@@ -7612,19 +7586,55 @@ function AuthGate() {
           className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 w-full max-w-sm"
         >
           <p className="text-lg font-bold text-gray-800 mb-1">샐리스 대시보드</p>
-          <p className="text-xs text-gray-400 mb-5">로그인 후 이용해주세요. 계정이 없으면 원장님께 문의해주세요.</p>
+          <p className="text-xs text-gray-400 mb-5">
+            {mode === 'login' ? '로그인 후 이용해주세요.' : '이름·이메일·비밀번호로 가입하면, 원장님이 승인한 뒤부터 이용할 수 있어요.'}
+          </p>
+          {mode === 'signup' && (
+            <>
+              <label className="block text-xs text-gray-500 mb-1">이름</label>
+              <input value={name} onChange={e => setName(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3" placeholder="김선생" />
+            </>
+          )}
           <label className="block text-xs text-gray-500 mb-1">이메일</label>
           <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3" placeholder="teacher@example.com" />
-          <label className="block text-xs text-gray-500 mb-1">비밀번호</label>
+          <label className="block text-xs text-gray-500 mb-1">비밀번호{mode === 'signup' && ' (6자 이상, 직접 정하세요)'}</label>
           <input type="password" required value={pw} onChange={e => setPw(e.target.value)}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4" placeholder="••••••••" />
           {err && <p className="text-xs text-red-600 mb-3">{err}</p>}
           <button type="submit" disabled={busy}
             className="w-full py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold disabled:opacity-50">
-            {busy ? '로그인 중…' : '로그인'}
+            {busy ? (mode === 'login' ? '로그인 중…' : '가입 중…') : (mode === 'login' ? '로그인' : '가입하기')}
+          </button>
+          <button type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setErr(''); }}
+            className="w-full text-center text-xs text-gray-400 hover:text-indigo-600 mt-3">
+            {mode === 'login' ? '처음이신가요? 가입하기' : '이미 계정이 있으신가요? 로그인'}
           </button>
         </form>
+      </div>
+    );
+  }
+  if (teacherDoc === undefined) {
+    return <div className="min-h-screen flex items-center justify-center text-sm text-gray-400">불러오는 중…</div>;
+  }
+  if (teacherDoc && teacherDoc.status !== 'approved') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 w-full max-w-sm text-center">
+          {teacherDoc.status === 'rejected' ? (
+            <>
+              <p className="text-lg font-bold text-gray-800 mb-1">승인되지 않았습니다</p>
+              <p className="text-xs text-gray-400 mb-5">이 계정은 원장님이 접근을 허용하지 않았어요. 문의해주세요.</p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-bold text-gray-800 mb-1">승인 대기 중</p>
+              <p className="text-xs text-gray-400 mb-5">원장님이 승인하면 바로 이용할 수 있어요. 이 화면은 승인되면 자동으로 넘어가요.</p>
+            </>
+          )}
+          <button onClick={() => fbAuth.signOut()} className="text-xs text-gray-400 underline hover:text-gray-600">로그아웃</button>
+        </div>
       </div>
     );
   }

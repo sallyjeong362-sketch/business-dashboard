@@ -934,6 +934,37 @@ function isActiveStudent(s, dateStr) {
   if (s.onHold) return false;
   return !s.withdrawDate || s.withdrawDate >= dateStr;
 }
+
+// 내신대비반: 중간/기말고사 기간에만 학교별로 꾸려지는 기간 한정 반(연 2~4회 정도).
+// 기존 반 학생들을 그대로 두지 않고, 같은 학교 다니는 학생들을 여러 기존 반에서
+// 골라 모아 별도 반으로 편성한다 — 그래서 class.students(기존 반 소속)는 그대로 두고,
+// examPrepStudentIds로 "참여 학생 id"만 따로 참조한다(학생 레코드를 복제하면
+// allStudents()의 id 기준 집계가 중복되어 수납/재원생 수가 깨지므로 절대 복제하지 않음).
+function isExamPrepActiveOn(c, dateStr) {
+  return !!(c.examPrep && c.examPrepStart && c.examPrepEnd && dateStr >= c.examPrepStart && dateStr <= c.examPrepEnd);
+}
+// 그 날짜(요일 포함)에 활성 내신대비반에 속해 있는 학생 id 집합 — 기존 반에서는
+// 이 학생들의 출결 대상을 빼주기 위해 쓰인다(내신대비반이 그날의 출결을 대신 가져감).
+function examPrepCoveredStudentIds(data, dateStr) {
+  const weekday = DAYS[new Date(dateStr + 'T00:00:00').getDay()];
+  const ids = new Set();
+  data.classes.forEach(c => {
+    if (c.examPrep && !c.archived && isExamPrepActiveOn(c, dateStr) && (c.days || []).includes(weekday)) {
+      (c.examPrepStudentIds || []).forEach(id => ids.add(id));
+    }
+  });
+  return ids;
+}
+// 특정 반·날짜의 "오늘 수업 대상" 학생 목록. 내신대비반이면 examPrepStudentIds를
+// allStudents에서 찾아 모아오고, 일반 반이면 그날 활성 내신대비반에 가 있는 학생은 뺀다.
+function classRosterForDate(data, c, dateStr) {
+  if (c.examPrep) {
+    const ids = new Set(c.examPrepStudentIds || []);
+    return allStudents(data).filter(s => ids.has(s.id) && isActiveStudent(s, dateStr));
+  }
+  const covered = examPrepCoveredStudentIds(data, dateStr);
+  return c.students.filter(s => isActiveStudent(s, dateStr) && !covered.has(s.id));
+}
 // 해당 월에 하루라도 재원했으면 그 달의 수납 대상에 포함
 function isActiveInMonth(s, monthKey) {
   return !s.withdrawDate || s.withdrawDate >= monthKey + '-01';
@@ -2100,15 +2131,17 @@ function App({ currentUser, teacherAccount } = {}) {
 
   useEffect(() => { saveData(data); }, [data]);
 
-  // 특강반은 운영 종료일이 지나면 손대지 않아도 자동으로 보관 처리되어 재원생 수·시간표·
-  // 수납현황에서 빠진다 (기록은 반 관리의 "보관된 반"에서 계속 열람 가능).
+  // 특강반·내신대비반은 운영(내신대비) 종료일이 지나면 손대지 않아도 자동으로 보관 처리되어
+  // 재원생 수·시간표·수납현황에서 빠진다 (기록은 반 관리의 "보관된 반"에서 계속 열람 가능).
   useEffect(() => {
     const today = todayStr();
-    const expired = data.classes.some(c => c.special && c.specialEnd && !c.archived && c.specialEnd < today);
+    const isExpired = c => (c.special && c.specialEnd && c.specialEnd < today)
+      || (c.examPrep && c.examPrepEnd && c.examPrepEnd < today);
+    const expired = data.classes.some(c => !c.archived && isExpired(c));
     if (!expired) return;
     setData(prev => ({
       ...prev,
-      classes: prev.classes.map(c => (c.special && c.specialEnd && !c.archived && c.specialEnd < today)
+      classes: prev.classes.map(c => (!c.archived && isExpired(c))
         ? { ...c, archived: true, archivedAt: today }
         : c),
     }));
@@ -2331,9 +2364,10 @@ function App({ currentUser, teacherAccount } = {}) {
   // 쓰기 동작도 다른 반에는 아예 닿을 수 없다 — 숨겨진 버튼이 아니라 애초에 목록에 없음).
   const todayClasses = useMemo(() => {
     return data.classes
-      .filter(c => !c.archived && c.days.includes(weekday) && (!isTeacherRole || myClassIds.includes(c.id)))
+      .filter(c => !c.archived && c.days.includes(weekday) && (!isTeacherRole || myClassIds.includes(c.id))
+        && (!c.examPrep || isExamPrepActiveOn(c, date)))
       .sort((a,b) => classTimeForDay(a, weekday).time.localeCompare(classTimeForDay(b, weekday).time));
-  }, [data.classes, weekday, isTeacherRole, myClassIds]);
+  }, [data.classes, weekday, date, isTeacherRole, myClassIds]);
 
   useEffect(() => {
     if (todayClasses.length && !todayClasses.find(c => c.id === selectedClassId)) {
@@ -4405,7 +4439,7 @@ function App({ currentUser, teacherAccount } = {}) {
           })()}
           {todayClasses.length === 0 && <EmptyState text="오늘 예정된 수업이 없습니다." />}
           {todayClasses.map(c => {
-            const activeStudents = c.students.filter(s => isActiveStudent(s, date));
+            const activeStudents = classRosterForDate(data, c, date);
             const checked = activeStudents.filter(s => getAttendanceEntry(data, date, c.id, s.id)?.status).length;
             const cancellation = getClassCancellation(data, date, c.id);
             return (
@@ -4414,7 +4448,7 @@ function App({ currentUser, teacherAccount } = {}) {
                   <div className="flex items-center gap-4 cursor-pointer" onClick={() => { setSelectedClassId(c.id); setTab('attendance'); }}>
                     <div className="text-sm font-semibold text-indigo-700 whitespace-nowrap">{formatClassTimeForDay(c, weekday)}</div>
                     <div>
-                      <p className="font-medium text-gray-900">{c.name}</p>
+                      <p className="font-medium text-gray-900">{c.examPrep && '📝 '}{c.name}</p>
                       <p className="text-xs text-gray-500">{c.teacher} · {c.room} · 학생 {activeStudents.length}명</p>
                     </div>
                   </div>
@@ -4496,7 +4530,7 @@ function App({ currentUser, teacherAccount } = {}) {
                 {todayClasses.map(c => (
                   <button key={c.id} onClick={() => setSelectedClassId(c.id)}
                     className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-sm border ${selectedClassId===c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'}`}>
-                    {formatClassTimeForDay(c, weekday)} {c.name}
+                    {formatClassTimeForDay(c, weekday)} {c.examPrep && '📝 '}{c.name}
                   </button>
                 ))}
               </div>
@@ -4542,7 +4576,10 @@ function App({ currentUser, teacherAccount } = {}) {
               )}
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-                  {viewData.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
+                  {(() => {
+                    const selClass = viewData.classes.find(c=>c.id===selectedClassId);
+                    return selClass ? classRosterForDate(data, selClass, date) : [];
+                  })().map(s => {
                     const entry = getAttendanceEntry(viewData, date, selectedClassId, s.id) || { status: null };
                     const hwStatus = normalizeHomework(entry);
                     const streakBadge = attendanceStreakBadge(viewData, selectedClassId, s.id);
@@ -4616,8 +4653,15 @@ function App({ currentUser, teacherAccount } = {}) {
                       </div>
                     );
                   })}
-                  {viewData.classes.find(c=>c.id===selectedClassId)?.students.length === 0 && (
-                    <p className="p-4 text-sm text-gray-400">등록된 학생이 없습니다. '반 관리' 탭에서 추가해주세요.</p>
+                  {(() => {
+                    const selClass = viewData.classes.find(c=>c.id===selectedClassId);
+                    return selClass && classRosterForDate(data, selClass, date).length === 0;
+                  })() && (
+                    <p className="p-4 text-sm text-gray-400">
+                      {viewData.classes.find(c=>c.id===selectedClassId)?.examPrep
+                        ? '배정된 학생이 없습니다. \'반 관리\' 탭에서 내신대비반 학생을 선택해주세요.'
+                        : '등록된 학생이 없습니다. \'반 관리\' 탭에서 추가해주세요.'}
+                    </p>
                   )}
                 </div>
               )}
@@ -4941,14 +4985,25 @@ function App({ currentUser, teacherAccount } = {}) {
                           🗓 특강 {c.specialStart || '?'} ~ {c.specialEnd || '?'}
                         </span>
                       )}
-                      {classCapacityInfo(c).full && (
+                      {c.examPrep && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700 align-middle font-semibold">
+                          📝 내신대비 {c.examPrepStart || '?'} ~ {c.examPrepEnd || '?'}
+                        </span>
+                      )}
+                      {!c.examPrep && classCapacityInfo(c).full && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 align-middle font-semibold">정원 마감</span>
                       )}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {c.teacher} · {c.room} · {classScheduleSummary(c)} · 재원 {classCapacityInfo(c).active}명
-                      {classCapacityInfo(c).capacity > 0 && ` / 정원 ${classCapacityInfo(c).capacity}명`}
-                      {classCapacityInfo(c).capacity > 0 && !classCapacityInfo(c).full && ` (여석 ${classCapacityInfo(c).seats})`}
+                      {c.teacher} · {c.room} · {classScheduleSummary(c)} · {c.examPrep
+                        ? `참여 학생 ${(c.examPrepStudentIds || []).length}명`
+                        : (
+                          <>
+                            재원 {classCapacityInfo(c).active}명
+                            {classCapacityInfo(c).capacity > 0 && ` / 정원 ${classCapacityInfo(c).capacity}명`}
+                            {classCapacityInfo(c).capacity > 0 && !classCapacityInfo(c).full && ` (여석 ${classCapacityInfo(c).seats})`}
+                          </>
+                        )}
                     </p>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
@@ -4970,12 +5025,36 @@ function App({ currentUser, teacherAccount } = {}) {
                       ...data.classes.map(x => (x.teacher || '').trim()).filter(Boolean),
                       ...Object.keys(data.teacherSalaries || {}),
                     ]))}
+                    students={allStudents(data).filter(s => isActiveStudent(s, todayStr()))}
                     onSave={fields => saveClassInfo(c.id, fields)}
                     onCancel={() => setClassFormFor(null)}
                   />
                 )}
                 {expanded && (
                   <>
+                    {c.examPrep ? (
+                      <div className="space-y-1.5 mt-3 mb-2">
+                        {(c.examPrepStudentIds || []).length === 0 && (
+                          <p className="text-xs text-gray-400">아직 선택된 학생이 없습니다. 위의 "정보 수정"에서 학생을 선택해주세요.</p>
+                        )}
+                        {allStudents(data)
+                          .filter(s => (c.examPrepStudentIds || []).includes(s.id))
+                          .sort(studentSortComparator(manageSort))
+                          .map(s => (
+                            <div key={s.id} className="bg-gray-50 px-2.5 py-1.5 rounded-lg flex items-center justify-between text-xs">
+                              <div>
+                                <span className="text-gray-700 font-medium">{s.name}</span>
+                                <span className="text-gray-400 ml-1.5">원래 반: {s.className || '-'}{s.school ? ' · ' + s.school : ''}</span>
+                              </div>
+                              <button
+                                onClick={() => saveClassInfo(c.id, { examPrepStudentIds: (c.examPrepStudentIds || []).filter(id => id !== s.id) })}
+                                className="text-gray-400 hover:text-red-500"
+                              >제외</button>
+                            </div>
+                          ))}
+                      </div>
+                    ) : (
+                      <>
                     <div className="space-y-1.5 mt-3 mb-2">
                       {sortedStudents.map(s => (
                         <div key={s.id} className="bg-gray-50 px-2.5 py-1.5 rounded-lg">
@@ -5015,6 +5094,8 @@ function App({ currentUser, teacherAccount } = {}) {
                       ))}
                     </div>
                     <button onClick={() => addStudent(c.id)} className="text-xs text-indigo-600 hover:underline">+ 학생 추가</button>
+                      </>
+                    )}
 
                     <div className="mt-3 pt-3 border-t border-dashed border-gray-200">
                       <p className="text-xs font-semibold text-gray-500">교재{(c.textbooks || []).length > 0 ? ` (${c.textbooks.length}권)` : ''}</p>
@@ -5564,7 +5645,7 @@ function App({ currentUser, teacherAccount } = {}) {
                   {todayClasses.map(c => (
                     <button key={c.id} onClick={() => setSelectedClassId(c.id)}
                       className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-sm border ${selectedClassId===c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'}`}>
-                      {formatClassTimeForDay(c, weekday)} {c.name}
+                      {formatClassTimeForDay(c, weekday)} {c.examPrep && '📝 '}{c.name}
                     </button>
                   ))}
                 </div>
@@ -7241,7 +7322,7 @@ function MetricStatusBadge({ status }) {
 
 /* 반 관리: 반 이름·담당 선생님·강의실을 한 화면에서 수정하는 폼
    (시간·요일 변경은 기존 관리자 탭의 반 정보 수정에서 가능) */
-function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
+function ClassEditForm({ cls, teacherNames, students, onSave, onCancel }) {
   const [f, setF] = useState({
     name: cls.name || '',
     teacher: cls.teacher || '',
@@ -7253,7 +7334,18 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
     special: cls.special || false,
     specialStart: cls.specialStart || '',
     specialEnd: cls.specialEnd || '',
+    examPrep: cls.examPrep || false,
+    examPrepStart: cls.examPrepStart || '',
+    examPrepEnd: cls.examPrepEnd || '',
+    examPrepStudentIds: cls.examPrepStudentIds || [],
   });
+  const [studentSearch, setStudentSearch] = useState('');
+  const toggleExamPrepStudent = id => setF(prev => ({
+    ...prev,
+    examPrepStudentIds: prev.examPrepStudentIds.includes(id)
+      ? prev.examPrepStudentIds.filter(x => x !== id)
+      : [...prev.examPrepStudentIds, id],
+  }));
   const [varyByDay, setVaryByDay] = useState(hasVariedTimes(cls));
   const [daySchedule, setDaySchedule] = useState(() => {
     const ds = {};
@@ -7348,6 +7440,47 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
           </div>
         )}
       </div>
+      <div className="mt-2.5 pt-2.5 border-t border-dashed border-indigo-200">
+        <label className="text-xs text-gray-700 flex items-center gap-1.5">
+          <input type="checkbox" checked={f.examPrep} onChange={setChecked('examPrep')} />
+          📝 내신대비반 (내신기간에만 학교별 등으로 꾸려지는 기간 한정 반)
+        </label>
+        {f.examPrep && (
+          <div className="mt-1.5">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-600">운영기간</span>
+              <input type="date" value={f.examPrepStart} onChange={set('examPrepStart')} className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white" />
+              <span className="text-gray-400">~</span>
+              <input type="date" value={f.examPrepEnd} onChange={set('examPrepEnd')} className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white" />
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">
+              이 기간·요일에만 시간표·출결에 나타나고, 아래에서 선택한 학생들은 그 기간 동안 원래 다니던 반의 출결 대상에서 빠지며 이 반에서 출결·진도·숙제를 기록합니다. 기간이 지나면 자동으로 보관 처리됩니다.
+            </p>
+            <div className="mt-2">
+              <input
+                type="text"
+                value={studentSearch}
+                onChange={e => setStudentSearch(e.target.value)}
+                placeholder="학생 검색 (이름·학교)"
+                className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+              />
+              <div className="max-h-40 overflow-y-auto mt-1.5 space-y-1 border border-gray-200 rounded-lg p-2 bg-white">
+                {(students || [])
+                  .filter(s => !studentSearch.trim() || (s.name + ' ' + (s.school || '')).includes(studentSearch.trim()))
+                  .sort((a, b) => (a.school || '').localeCompare(b.school || '', 'ko') || a.name.localeCompare(b.name, 'ko'))
+                  .map(s => (
+                    <label key={s.id} className="flex items-center gap-1.5 text-xs text-gray-700">
+                      <input type="checkbox" checked={f.examPrepStudentIds.includes(s.id)} onChange={() => toggleExamPrepStudent(s.id)} />
+                      {s.name} <span className="text-gray-400">· {s.school || '학교 미입력'} · {s.className}</span>
+                    </label>
+                  ))}
+                {(students || []).length === 0 && <p className="text-xs text-gray-400">등록된 학생이 없습니다.</p>}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">선택된 학생 {f.examPrepStudentIds.length}명</p>
+            </div>
+          </div>
+        )}
+      </div>
       <p className="text-xs text-gray-400 mt-2">정원을 입력하면 재원생(퇴소생 제외)이 정원에 찼을 때 "정원 마감"이 자동 표시되고, 퇴소생이 생기면 자동으로 풀립니다. 담당 선생님 변경은 경영지표·업무일지에 바로 반영돼요.</p>
       <div className="flex gap-2 mt-3">
         <button
@@ -7368,6 +7501,8 @@ function ClassEditForm({ cls, teacherNames, onSave, onCancel }) {
               time: f.time, endTime: f.endTime, days: f.days,
               daySchedule: finalDaySchedule,
               special: f.special, specialStart: f.special ? f.specialStart : '', specialEnd: f.special ? f.specialEnd : '',
+              examPrep: f.examPrep, examPrepStart: f.examPrep ? f.examPrepStart : '', examPrepEnd: f.examPrep ? f.examPrepEnd : '',
+              examPrepStudentIds: f.examPrep ? f.examPrepStudentIds : [],
             });
           }}
           className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed">저장</button>

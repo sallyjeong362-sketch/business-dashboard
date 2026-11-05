@@ -1771,9 +1771,26 @@ function dDayInfo(ev, todayDateStr) {
   return { label, color };
 }
 
-function App({ currentUser } = {}) {
+function App({ currentUser, teacherAccount } = {}) {
+  // teacherAccount: AuthGate가 이미 승인(status:'approved') 확인을 마치고 넘겨준다.
+  // null이면 teacherAccounts 문서가 없는 계정(= 원장님이 Firebase 콘솔에서 직접 만든
+  // 계정)이라 전체 접근, 객체면 담당 반(classIds)으로 화면이 제한되는 선생님 계정이다.
+  const isTeacherRole = !!teacherAccount;
+  const myClassIds = teacherAccount ? (teacherAccount.classIds || []) : null;
+  // 학생 명단·출결·단어시험·학습리포트처럼 "학생 정보"를 보여주는 탭에서, 선생님
+  // 계정은 담당 반 외 학생이 아예 안 보이게 한다(검색으로도 안 나옴).
+  const TEACHER_VISIBLE_TABS = ['home', 'directory', 'notice', 'academySchedule', 'schedule', 'attendance', 'vocabtest', 'report'];
   const [data, setData] = useState(loadData());
+  const scopedClasses = isTeacherRole ? data.classes.filter(c => myClassIds.includes(c.id)) : data.classes;
+  // 인적사항·출결·단어문법시험·학습리포트 탭 안에서만 쓰는, 담당 반으로 좁힌 데이터 뷰.
+  // (수납현황·경영지표·관리자 등은 탭 자체가 안 보이므로 건드릴 필요 없음)
+  const viewData = isTeacherRole ? { ...data, classes: scopedClasses } : data;
   const [tab, setTab] = useState('home');
+  // 선생님 계정이 허용되지 않은 탭에 있던 상태(예: 예전에 저장된 탭 기억 등)로 남아있지
+  // 않도록, 매 렌더마다 허용 탭 목록을 벗어나면 홈으로 되돌린다(관리자 탭 직접 접근 방지).
+  useEffect(() => {
+    if (isTeacherRole && !TEACHER_VISIBLE_TABS.includes(tab)) setTab('home');
+  }, [isTeacherRole, tab]);
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [date, setDate] = useState(todayStr());
   const [reportStudentId, setReportStudentId] = useState(null);
@@ -3928,7 +3945,7 @@ function App({ currentUser } = {}) {
           {!sidebarCollapsed && <span>메뉴 접기</span>}
         </button>
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
-          {data.tabOrder.map(key => {
+          {data.tabOrder.filter(key => !isTeacherRole || TEACHER_VISIBLE_TABS.includes(key)).map(key => {
             const meta = TAB_META[key];
             return (
               <button
@@ -3982,7 +3999,7 @@ function App({ currentUser } = {}) {
         />
       </div>
 
-      {(tab === 'home' || tab === 'payment') && (paymentAlerts.dueToday.length > 0 || paymentAlerts.dueTomorrow.length > 0 || paymentAlerts.unpaidList.length > 0) && (
+      {!isTeacherRole && (tab === 'home' || tab === 'payment') && (paymentAlerts.dueToday.length > 0 || paymentAlerts.dueTomorrow.length > 0 || paymentAlerts.unpaidList.length > 0) && (
         <div className="flex items-center justify-between gap-3 flex-wrap bg-yellow-50 border border-yellow-300 rounded-xl px-4 py-3 mb-5">
           <div className="space-y-1">
             {paymentAlerts.dueToday.length > 0 && (
@@ -4026,7 +4043,7 @@ function App({ currentUser } = {}) {
         const attValue = summary.total ? `${summary.present + summary.late} / ${summary.total}명` : '-';
         const revValue = `${paymentSummary.totalDue.toLocaleString()}원`;
         return (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-5">
+          <div className={`grid grid-cols-1 ${isTeacherRole ? 'sm:grid-cols-2' : 'sm:grid-cols-3'} gap-2.5 mb-5`}>
             <button onClick={() => setTab('academySchedule')} className="text-left bg-white border border-gray-200 rounded-xl p-3.5 shadow-sm hover:border-indigo-300 transition">
               <p className="text-[11px] font-bold text-gray-400 mb-1.5">학원일정</p>
               <p className="text-base font-bold text-gray-900 truncate">{scheduleValue}</p>
@@ -4037,21 +4054,23 @@ function App({ currentUser } = {}) {
               <p className="text-base font-bold text-gray-900">{attValue}</p>
               <p className="text-xs text-indigo-600 font-semibold mt-1">오늘 출석 체크</p>
             </button>
-            <button onClick={() => setTab('payment')} className="text-left bg-white border border-gray-200 rounded-xl p-3.5 shadow-sm hover:border-indigo-300 transition">
-              <p className="text-[11px] font-bold text-gray-400 mb-1.5">매출</p>
-              <p className="text-base font-bold text-gray-900">{revValue}</p>
-              <p className="text-xs text-indigo-600 font-semibold mt-1">전체 수강료 기준</p>
-            </button>
+            {!isTeacherRole && (
+              <button onClick={() => setTab('payment')} className="text-left bg-white border border-gray-200 rounded-xl p-3.5 shadow-sm hover:border-indigo-300 transition">
+                <p className="text-[11px] font-bold text-gray-400 mb-1.5">매출</p>
+                <p className="text-base font-bold text-gray-900">{revValue}</p>
+                <p className="text-xs text-indigo-600 font-semibold mt-1">전체 수강료 기준</p>
+              </button>
+            )}
           </div>
         );
       })()}
 
-      <div className="grid grid-cols-5 gap-2 mb-5">
+      <div className={`grid ${isTeacherRole ? 'grid-cols-4' : 'grid-cols-5'} gap-2 mb-5`}>
         <SummaryCard label="오늘 수업" value={todayClasses.length + '개'} tone="bg-indigo-50 text-indigo-700" />
         <SummaryCard label="출석" value={summary.present + '명'} tone="bg-green-50 text-green-700" />
         <SummaryCard label="결석" value={summary.absent + '명'} tone="bg-red-50 text-red-700" />
         <SummaryCard label="미체크" value={summary.unchecked + '명'} tone="bg-gray-100 text-gray-600" />
-        <SummaryCard label="오늘 상담" value={todayCounselingCount + '건'} tone="bg-purple-50 text-purple-700" />
+        {!isTeacherRole && <SummaryCard label="오늘 상담" value={todayCounselingCount + '건'} tone="bg-purple-50 text-purple-700" />}
       </div>
         </>
       )}
@@ -4134,12 +4153,12 @@ function App({ currentUser } = {}) {
             <SummaryCard
               label="재원생 수"
               value={(() => {
-                const allG = groupStudentsByName(allStudents(data));
+                const allG = groupStudentsByName(allStudents(viewData));
                 const all = allG.length;
-                const active = groupStudentsByName(allStudents(data).filter(s => isActiveStudent(s, todayStr()))).length;
+                const active = groupStudentsByName(allStudents(viewData).filter(s => isActiveStudent(s, todayStr()))).length;
                 const withdrawn = allG.filter(g => g.entries[0].withdrawDate).length;
                 const onHold = allG.filter(g => g.entries[0].onHold && !g.entries[0].withdrawDate).length;
-                const regs = allStudents(data).length;
+                const regs = allStudents(viewData).length;
                 return active + '명'
                   + (withdrawn > 0 ? ` · 퇴소 ${withdrawn}명` : '')
                   + (onHold > 0 ? ` · 홀딩 ${onHold}명` : '')
@@ -4153,7 +4172,7 @@ function App({ currentUser } = {}) {
               {showMonthlyStats ? '▾' : '▸'} 월별 등록·퇴소·재원생 현황 {showMonthlyStats ? '접기' : '보기'}
             </button>
             {showMonthlyStats && (() => {
-              const rows = monthlyStudentStats(data).slice().reverse();
+              const rows = monthlyStudentStats(viewData).slice().reverse();
               return rows.length === 0 ? (
                 <p className="text-xs text-gray-400 mt-2">등록일·퇴소일이 입력된 학생이 없어 월별 현황을 계산할 수 없습니다.</p>
               ) : (
@@ -4184,7 +4203,7 @@ function App({ currentUser } = {}) {
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-sm text-gray-600 mb-2">
-              학년은 매년 1회(연도가 바뀔 때) 자동으로 한 단계씩 올라갑니다. 마지막 자동 진급 연도: <strong className="text-gray-900">{data.gradePromotionYear}년</strong>
+              학년은 매년 1회(연도가 바뀔 때) 자동으로 한 단계씩 올라갑니다. 마지막 자동 진급 연도: <strong className="text-gray-900">{viewData.gradePromotionYear}년</strong>
             </p>
             <button onClick={forcePromoteGrades} className="text-xs text-indigo-600 hover:underline">지금 전체 학년 진급 적용</button>
           </div>
@@ -4205,7 +4224,7 @@ function App({ currentUser } = {}) {
           {directoryFormFor === 'new' ? (
             <StudentEditForm
               student={{}}
-              classes={data.classes.filter(c => !c.archived)}
+              classes={viewData.classes.filter(c => !c.archived)}
               selectedClassIds={[]}
               isNew
               onSave={(fields, classIds) => saveStudentMaster(null, fields, classIds)}
@@ -4216,9 +4235,9 @@ function App({ currentUser } = {}) {
               + 새 학생 등록 (인적사항 입력 후 반 선택)
             </button>
           )}
-          {allStudents(data).length === 0 && <EmptyState text="등록된 학생이 없습니다. 위의 새 학생 등록으로 추가해주세요." />}
+          {allStudents(viewData).length === 0 && <EmptyState text="등록된 학생이 없습니다. 위의 새 학생 등록으로 추가해주세요." />}
           {(() => {
-            const sortedGroups = groupStudentsByName(allStudents(data).slice().sort(studentSortComparator(directorySort)));
+            const sortedGroups = groupStudentsByName(allStudents(viewData).slice().sort(studentSortComparator(directorySort)));
             const activeGroups = sortedGroups.filter(g => !g.entries[0].withdrawDate);
             const withdrawnGroups = sortedGroups.filter(g => g.entries[0].withdrawDate);
             const renderRow = (g, num) => {
@@ -4241,9 +4260,9 @@ function App({ currentUser } = {}) {
                       {!s.withdrawDate && s.onHold && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 align-middle">⏸ 홀딩 중{s.holdMemo ? ` · ${s.holdMemo}` : ''}</span>
                       )}
-                      {!s.withdrawDate && !s.onHold && worstAttendanceStreakBadge(data, g.entries) && (
-                        <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full border align-middle font-medium ${worstAttendanceStreakBadge(data, g.entries).color}`}>
-                          {worstAttendanceStreakBadge(data, g.entries).label}
+                      {!s.withdrawDate && !s.onHold && worstAttendanceStreakBadge(viewData, g.entries) && (
+                        <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full border align-middle font-medium ${worstAttendanceStreakBadge(viewData, g.entries).color}`}>
+                          {worstAttendanceStreakBadge(viewData, g.entries).label}
                         </span>
                       )}
                       <p className="text-xs text-gray-500 mt-0.5">
@@ -4263,7 +4282,7 @@ function App({ currentUser } = {}) {
                     <div className="mt-2">
                       <StudentEditForm
                         student={s}
-                        classes={data.classes}
+                        classes={viewData.classes}
                         selectedClassIds={g.entries.map(e => e.classId)}
                         onSave={(fields, classIds) => saveStudentMaster(g.name, fields, classIds)}
                         onCancel={() => setDirectoryFormFor(null)}
@@ -4413,12 +4432,12 @@ function App({ currentUser } = {}) {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs text-gray-500 block">오늘 수업 내용 (진도)</label>
-                      {data.lessonLogsUndo?.[date]?.[selectedClassId] !== undefined && (
+                      {viewData.lessonLogsUndo?.[date]?.[selectedClassId] !== undefined && (
                         <button onClick={() => undoEdit('lesson', selectedClassId)} className="text-[11px] text-indigo-600 hover:underline">↩ 되돌리기</button>
                       )}
                     </div>
                     <textarea
-                      value={getLessonLog(data, date, selectedClassId)}
+                      value={getLessonLog(viewData, date, selectedClassId)}
                       onFocus={() => captureEditSnapshot('lesson', selectedClassId)}
                       onChange={e => setLessonLog(selectedClassId, e.target.value)}
                       onBlur={() => commitEditUndo('lesson', selectedClassId)}
@@ -4430,12 +4449,12 @@ function App({ currentUser } = {}) {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs text-gray-500 block">오늘 내준 숙제</label>
-                      {data.classHomeworkUndo?.[date]?.[selectedClassId] !== undefined && (
+                      {viewData.classHomeworkUndo?.[date]?.[selectedClassId] !== undefined && (
                         <button onClick={() => undoEdit('homework', selectedClassId)} className="text-[11px] text-indigo-600 hover:underline">↩ 되돌리기</button>
                       )}
                     </div>
                     <textarea
-                      value={getClassHomework(data, date, selectedClassId)}
+                      value={getClassHomework(viewData, date, selectedClassId)}
                       onFocus={() => captureEditSnapshot('homework', selectedClassId)}
                       onChange={e => setClassHomework(selectedClassId, e.target.value)}
                       onBlur={() => commitEditUndo('homework', selectedClassId)}
@@ -4448,10 +4467,10 @@ function App({ currentUser } = {}) {
               )}
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-                  {data.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
-                    const entry = getAttendanceEntry(data, date, selectedClassId, s.id) || { status: null };
+                  {viewData.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
+                    const entry = getAttendanceEntry(viewData, date, selectedClassId, s.id) || { status: null };
                     const hwStatus = normalizeHomework(entry);
-                    const streakBadge = attendanceStreakBadge(data, selectedClassId, s.id);
+                    const streakBadge = attendanceStreakBadge(viewData, selectedClassId, s.id);
                     return (
                       <div key={s.id} className="flex items-center justify-between p-3 flex-wrap gap-2">
                         <div className="min-w-20">
@@ -4522,7 +4541,7 @@ function App({ currentUser } = {}) {
                       </div>
                     );
                   })}
-                  {data.classes.find(c=>c.id===selectedClassId)?.students.length === 0 && (
+                  {viewData.classes.find(c=>c.id===selectedClassId)?.students.length === 0 && (
                     <p className="p-4 text-sm text-gray-400">등록된 학생이 없습니다. '반 관리' 탭에서 추가해주세요.</p>
                   )}
                 </div>
@@ -5091,8 +5110,8 @@ function App({ currentUser } = {}) {
             const q = reportSearch.trim();
             // 반 필터 → 이름 검색 순서로 좁혀서 학생 선택 목록을 만든다
             const inClass = reportClassFilter
-              ? allStudents(data).filter(s => s.classId === reportClassFilter)
-              : allStudents(data);
+              ? allStudents(viewData).filter(s => s.classId === reportClassFilter)
+              : allStudents(viewData);
             const filtered = q ? inClass.filter(s => s.name.includes(q)) : inClass;
             const visible = filtered.length ? filtered : inClass;
             if (visible.length && !visible.some(s => s.id === reportStudentId)) {
@@ -5108,7 +5127,7 @@ function App({ currentUser } = {}) {
                     className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
                   >
                     <option value="">전체 반</option>
-                    {data.classes.map(c => (
+                    {viewData.classes.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
@@ -5160,19 +5179,19 @@ function App({ currentUser } = {}) {
                 </div>
                 <button
                   onClick={openDailyReportConfirm}
-                  disabled={reportSendPending || !data.alimtalkProxyUrl}
+                  disabled={reportSendPending || !viewData.alimtalkProxyUrl}
                   className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
                 >💬 카카오 알림톡 발송</button>
                 <button
                   onClick={openDailyReportBulkConfirm}
-                  disabled={reportSendPending || !data.alimtalkProxyUrl}
+                  disabled={reportSendPending || !viewData.alimtalkProxyUrl}
                   title="위에서 반을 선택했으면 그 반, 아니면 선택한 학생의 반 전체에게 각자의 데일리 리포트를 보냅니다"
                   className="px-3.5 py-1.5 text-sm rounded-lg border border-yellow-400 text-yellow-800 font-medium hover:bg-yellow-50 disabled:opacity-50"
                 >📢 반 전체 발송</button>
-                {!data.alimtalkProxyUrl && <span className="text-xs text-gray-400">관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요</span>}
+                {!viewData.alimtalkProxyUrl && <span className="text-xs text-gray-400">관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요</span>}
               </div>
               {(() => {
-                const v = buildDailyReportVars(data, reportData.student, dailyReportDate);
+                const v = buildDailyReportVars(viewData, reportData.student, dailyReportDate);
                 return (
                   <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 space-y-1">
                     <p className="font-semibold text-gray-500">{v.dateLabel} · {reportData.student.name}</p>
@@ -5206,12 +5225,12 @@ function App({ currentUser } = {}) {
                 </div>
                 <button
                   onClick={openMonthlyReportConfirm}
-                  disabled={reportSendPending || !data.alimtalkProxyUrl}
+                  disabled={reportSendPending || !viewData.alimtalkProxyUrl}
                   className="px-3.5 py-1.5 text-sm rounded-lg bg-yellow-400 text-yellow-950 font-medium hover:bg-yellow-300 disabled:opacity-50"
                 >💬 먼슬리 리포트 발송</button>
               </div>
               {(() => {
-                const info = buildMonthlyReportInfo(data, reportData.student, monthlyReportMonth);
+                const info = buildMonthlyReportInfo(viewData, reportData.student, monthlyReportMonth);
                 return (
                   <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 space-y-1">
                     <p className="font-semibold text-gray-500">{info.monthLabel} · {reportData.student.name}</p>
@@ -5237,19 +5256,19 @@ function App({ currentUser } = {}) {
               <div className="report-tools flex gap-2 flex-wrap mb-4">
                 <button onClick={() => window.print()} className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300">🖨 인쇄 / PDF 저장</button>
                 <a
-                  href={'data:text/html;charset=utf-8,' + encodeURIComponent(buildReportStandaloneHTML(data, reportData, comment))}
+                  href={'data:text/html;charset=utf-8,' + encodeURIComponent(buildReportStandaloneHTML(viewData, reportData, comment))}
                   download={`academy-report-${reportData.student.id}-${reportData.startDate}-${reportData.endDate}.html`}
                   className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300"
                 >📄 리포트 파일 저장</a>
                 {reportData.student.parentPhone && (
                   <a
-                    href={'sms:' + reportData.student.parentPhone.replace(/[^0-9+]/g, '') + '?body=' + encodeURIComponent(buildReportSummaryText(data, reportData, comment))}
+                    href={'sms:' + reportData.student.parentPhone.replace(/[^0-9+]/g, '') + '?body=' + encodeURIComponent(buildReportSummaryText(viewData, reportData, comment))}
                     className="px-3.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:border-indigo-300"
                   >📱 문자로 발송</a>
                 )}
                 <button
                   onClick={() => {
-                    const text = buildReportSummaryText(data, reportData, comment);
+                    const text = buildReportSummaryText(viewData, reportData, comment);
                     const done = ok => setReportCopyFlash(ok ? '리포트 내용을 복사했습니다. 카카오톡·문자 등에 붙여넣어 학부모님께 보내세요.' : '자동 복사에 실패했습니다.');
                     if (navigator.clipboard && navigator.clipboard.writeText) {
                       navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(false));
@@ -5273,8 +5292,8 @@ function App({ currentUser } = {}) {
                     )}
                   </div>
                 </div>
-                <span className={`text-xs px-2.5 py-1 rounded-full ${data.alimtalkProxyUrl ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>
-                  {data.alimtalkProxyUrl ? '알림톡 연동됨' : '알림톡 미설정'}
+                <span className={`text-xs px-2.5 py-1 rounded-full ${viewData.alimtalkProxyUrl ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>
+                  {viewData.alimtalkProxyUrl ? '알림톡 연동됨' : '알림톡 미설정'}
                 </span>
               </div>
 
@@ -5416,9 +5435,9 @@ function App({ currentUser } = {}) {
                 </button>
                 <button
                   onClick={openReportAlimtalkConfirm}
-                  disabled={(!reportData.student.parentPhone && !reportData.student.studentPhone) || !data.alimtalkProxyUrl || reportSendPending}
-                  title={(!reportData.student.parentPhone && !reportData.student.studentPhone) ? '학부모/학생 연락처가 없습니다' : (!data.alimtalkProxyUrl ? '관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요' : '')}
-                  className={`flex-1 py-2 text-sm rounded-lg border ${((!reportData.student.parentPhone && !reportData.student.studentPhone) || !data.alimtalkProxyUrl || reportSendPending) ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                  disabled={(!reportData.student.parentPhone && !reportData.student.studentPhone) || !viewData.alimtalkProxyUrl || reportSendPending}
+                  title={(!reportData.student.parentPhone && !reportData.student.studentPhone) ? '학부모/학생 연락처가 없습니다' : (!viewData.alimtalkProxyUrl ? '관리자 탭에서 알림톡 프록시 URL을 먼저 설정해주세요' : '')}
+                  className={`flex-1 py-2 text-sm rounded-lg border ${((!reportData.student.parentPhone && !reportData.student.studentPhone) || !viewData.alimtalkProxyUrl || reportSendPending) ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
                 >
                   {reportSendPending ? '발송 중...' : '카카오 알림톡 발송'}
                 </button>
@@ -5426,10 +5445,10 @@ function App({ currentUser } = {}) {
               {reportSendSuccessFlash && <p className="text-xs text-green-600 mt-2">카카오 알림톡으로 발송했어요.</p>}
               {reportSendError && <p className="text-xs text-red-500 mt-2">{reportSendError}</p>}
 
-              {data.reports[reportData.student.id]?.length > 0 && (
+              {viewData.reports[reportData.student.id]?.length > 0 && (
                 <div className="mt-4 pt-3 border-t border-gray-100">
                   <p className="text-xs text-gray-500 mb-1.5">발송 이력</p>
-                  {data.reports[reportData.student.id].slice().reverse().map((r,i) => (
+                  {viewData.reports[reportData.student.id].slice().reverse().map((r,i) => (
                     <p key={i} className="text-xs text-gray-400">{r.date} · 채널: {r.channel}{r.phone ? ` (${r.phone})` : ''}</p>
                   ))}
                 </div>
@@ -5466,7 +5485,7 @@ function App({ currentUser } = {}) {
                         <div key={testType} className="bg-white rounded-lg p-2.5 border border-gray-100">
                           <p className="text-xs font-medium text-gray-600 mb-1.5">{testType}</p>
                           <ExamPatternForm
-                            pattern={data.examPatterns?.classes?.[selectedClassId]?.[testType] || null}
+                            pattern={viewData.examPatterns?.classes?.[selectedClassId]?.[testType] || null}
                             onSave={patch => setClassExamPattern(selectedClassId, testType, patch)}
                             onClear={() => clearClassExamPattern(selectedClassId, testType)}
                           />
@@ -5479,12 +5498,12 @@ function App({ currentUser } = {}) {
               )}
               {selectedClassId && (
                 <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100 mb-4">
-                  {data.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
+                  {viewData.classes.find(c=>c.id===selectedClassId)?.students.filter(s => isActiveStudent(s, date)).map(s => {
                     return (
                       <div key={s.id} className="p-3 space-y-2.5">
                         <span className="text-sm font-medium text-gray-800">{s.name}</span>
                         {VOCAB_TEST_TYPES.map(testType => {
-                          const v = getVocabTest(data, s.id, date, testType) || { result: null, wrongCount: 0, retest: null, comment: '' };
+                          const v = getVocabTest(viewData, s.id, date, testType) || { result: null, wrongCount: 0, retest: null, comment: '' };
                           return (
                             <div key={testType} className="pt-2 border-t border-gray-50 first:border-t-0 first:pt-0 space-y-1.5">
                               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -5580,7 +5599,7 @@ function App({ currentUser } = {}) {
                       </div>
                     );
                   })}
-                  {data.classes.find(c=>c.id===selectedClassId)?.students.length === 0 && (
+                  {viewData.classes.find(c=>c.id===selectedClassId)?.students.length === 0 && (
                     <p className="p-4 text-sm text-gray-400">등록된 학생이 없습니다. '반 관리' 탭에서 추가해주세요.</p>
                   )}
                 </div>
@@ -5589,8 +5608,8 @@ function App({ currentUser } = {}) {
           )}
 
           {(() => {
-            const pending = pendingRetests(data);
-            const dueSoon = dueSoonRetests(data);
+            const pending = pendingRetests(viewData);
+            const dueSoon = dueSoonRetests(viewData);
             return pending.length > 0 && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
@@ -5687,7 +5706,7 @@ function App({ currentUser } = {}) {
                   {expanded && (
                     <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
                       {groupsForDate.map(g => {
-                        const student = allStudents(data).find(s => s.id === g.studentId);
+                        const student = allStudents(viewData).find(s => s.id === g.studentId);
                         return (
                           <div key={g.studentId + '|' + g.date} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
                             <p className="font-medium text-gray-900 text-sm">{student ? `${student.name} (${student.className})` : '삭제된 학생'}</p>
@@ -7638,7 +7657,7 @@ function AuthGate() {
       </div>
     );
   }
-  return <App currentUser={user} />;
+  return <App currentUser={user} teacherAccount={teacherDoc} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(SHARED_REPORT ? <SharedReportView r={SHARED_REPORT} /> : <AuthGate />);

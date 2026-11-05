@@ -6182,13 +6182,20 @@ function App({ currentUser, teacherAccount } = {}) {
         );
       })()}
 
-      {tab === 'counseling' && (
+      {tab === 'counseling' && (() => {
+        // 선생님 계정은 담당 반 학생과 연결된 상담만 본다. studentId가 없는(신입 문의 등
+        // 아직 반 배정 전) 기록은 특정 선생님 담당으로 단정할 수 없어 원장님만 볼 수 있다.
+        const scopedStudentIds = new Set(scopedClasses.flatMap(c => c.students.map(s => s.id)));
+        const visibleCounseling = isTeacherRole ? data.counseling.filter(k => k.studentId && scopedStudentIds.has(k.studentId)) : data.counseling;
+        return (
         <div className="space-y-3">
           <ReadOnlyNotice tabKey="counseling" />
+          {isTeacherRole && <p className="text-xs bg-gray-100 text-gray-500 rounded-lg px-3 py-2">담당 반 학생과 연결된 상담만 보여요. 아직 반 배정 전인 신입 문의 등은 원장님 화면에서만 보여요.</p>}
           <fieldset disabled={!tabWritable('counseling')} className="border-0 p-0 m-0 min-w-0">
           {counselingFormFor === 'new' ? (
             <CounselingForm
               initial={{ date: todayStr() }}
+              students={allStudents(viewData)}
               onSave={fields => saveCounseling(null, fields)}
               onCancel={() => setCounselingFormFor(null)}
             />
@@ -6198,10 +6205,10 @@ function App({ currentUser, teacherAccount } = {}) {
             </button>
           )}
           </fieldset>
-          {data.counseling.length === 0 && <EmptyState text="등록된 상담이 없습니다." />}
+          {visibleCounseling.length === 0 && <EmptyState text="등록된 상담이 없습니다." />}
           {(() => {
             const byDate = {};
-            data.counseling.forEach(k => {
+            visibleCounseling.forEach(k => {
               if (!byDate[k.date]) byDate[k.date] = [];
               byDate[k.date].push(k);
             });
@@ -6235,6 +6242,7 @@ function App({ currentUser, teacherAccount } = {}) {
                             <fieldset disabled={!tabWritable('counseling')} className="border-0 p-0 m-0 min-w-0">
                               <CounselingForm
                                 initial={k}
+                                students={allStudents(viewData)}
                                 onSave={fields => saveCounseling(k.id, fields)}
                                 onCancel={() => setCounselingFormFor(null)}
                               />
@@ -6268,7 +6276,8 @@ function App({ currentUser, teacherAccount } = {}) {
             });
           })()}
         </div>
-      )}
+        );
+      })()}
 
       {tab === 'academySchedule' && (
         <div>
@@ -7485,8 +7494,9 @@ function StudentEditForm({ student, classes, selectedClassIds, isNew, onSave, on
 const COUNSELING_TYPES = ['입학상담', '정기상담', '민원', '기타'];
 
 /* 상담 기록 전체를 한 화면에서 입력하는 폼 */
-function CounselingForm({ initial, onSave, onCancel }) {
+function CounselingForm({ initial, students, onSave, onCancel }) {
   const [f, setF] = useState({
+    studentId: initial.studentId || '',
     studentName: initial.studentName || '',
     parentName: initial.parentName || '',
     type: initial.type || '정기상담',
@@ -7500,8 +7510,25 @@ function CounselingForm({ initial, onSave, onCancel }) {
   return (
     <div className="w-full bg-indigo-50/60 border border-indigo-200 rounded-xl p-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        {students && (
+          <label className="text-xs text-gray-600">등록된 학생 (선택)
+            <select
+              value={f.studentId}
+              onChange={e => {
+                const sid = e.target.value;
+                const s = sid ? students.find(st => st.id === sid) : null;
+                setF(prev => ({ ...prev, studentId: sid, studentName: s ? s.name : prev.studentName }));
+              }}
+              className={inputCls}
+            >
+              <option value="">직접 입력 (신입 문의 등)</option>
+              {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.className})</option>)}
+            </select>
+          </label>
+        )}
         <label className="text-xs text-gray-600">학생 이름 (또는 문의자) *
-          <input value={f.studentName} onChange={set('studentName')} className={inputCls} />
+          <input value={f.studentName} onChange={set('studentName')} disabled={!!f.studentId}
+            className={inputCls + (f.studentId ? ' bg-gray-100 text-gray-400' : '')} />
         </label>
         <label className="text-xs text-gray-600">학부모 이름 (선택)
           <input value={f.parentName} onChange={set('parentName')} className={inputCls} />

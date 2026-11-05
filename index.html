@@ -1795,7 +1795,15 @@ function App({ currentUser, teacherAccount } = {}) {
     if (TEACHER_FIXED_VIEW_ONLY_TABS.includes(tabKey)) return false;
     const perms = teacherAccount && teacherAccount.tabPermissions;
     if (!perms) return true;
-    return perms[tabKey] !== 'view';
+    return perms[tabKey] !== 'view' && perms[tabKey] !== 'none';
+  }
+  // 탭 자체를 아예 숨길지(메뉴에서도 안 보임) — 'none'으로 지정된 탭만 해당.
+  function tabAccessible(tabKey) {
+    if (!isTeacherRole) return true;
+    if (!TEACHER_PERMISSION_TABS.includes(tabKey)) return true; // 설정 불가 탭(고정 열람 포함)은 항상 접근 가능
+    const perms = teacherAccount && teacherAccount.tabPermissions;
+    if (!perms) return true;
+    return perms[tabKey] !== 'none';
   }
   function ReadOnlyNotice({ tabKey }) {
     if (tabWritable(tabKey)) return null;
@@ -1808,8 +1816,8 @@ function App({ currentUser, teacherAccount } = {}) {
   // 선생님 계정이 허용되지 않은 탭에 있던 상태(예: 예전에 저장된 탭 기억 등)로 남아있지
   // 않도록, 매 렌더마다 허용 탭 목록을 벗어나면 홈으로 되돌린다(관리자 탭 직접 접근 방지).
   useEffect(() => {
-    if (isTeacherRole && !TEACHER_VISIBLE_TABS.includes(tab)) setTab('home');
-  }, [isTeacherRole, tab]);
+    if (isTeacherRole && (!TEACHER_VISIBLE_TABS.includes(tab) || !tabAccessible(tab))) setTab('home');
+  }, [isTeacherRole, tab, teacherAccount && JSON.stringify(teacherAccount.tabPermissions)]);
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [date, setDate] = useState(todayStr());
   const [reportStudentId, setReportStudentId] = useState(null);
@@ -3974,7 +3982,7 @@ function App({ currentUser, teacherAccount } = {}) {
           {!sidebarCollapsed && <span>메뉴 접기</span>}
         </button>
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
-          {data.tabOrder.filter(key => !isTeacherRole || TEACHER_VISIBLE_TABS.includes(key)).map(key => {
+          {data.tabOrder.filter(key => !isTeacherRole || (TEACHER_VISIBLE_TABS.includes(key) && tabAccessible(key))).map(key => {
             const meta = TAB_META[key];
             return (
               <button
@@ -6776,41 +6784,62 @@ function App({ currentUser, teacherAccount } = {}) {
                         <div className="flex items-center justify-between">
                           <p className="text-sm text-gray-800">{t.name} <span className="text-xs text-gray-400">({t.email})</span></p>
                           <button
-                            onClick={() => { if (confirm(t.name + ' 선생님의 접근을 차단할까요? (다시 승인하면 바로 복구돼요)')) setTeacherAccountStatus(t.uid, 'rejected'); }}
+                            onClick={() => { if (confirm(t.name + ' 선생님의 접근을 차단할까요? (다시 승인하면 바로 복구돼요)')) { setTeacherAccountStatus(t.uid, 'rejected'); setApprovalFlash(`${t.name} 선생님의 접근을 차단했어요.`); } }}
                             className="text-xs text-gray-400 hover:text-red-500"
                           >접근 차단</button>
                         </div>
-                        <p className="text-[11px] text-gray-400 mt-2 mb-1">담당 반</p>
+                        <p className="text-[11px] text-gray-400 mt-2 mb-1">담당 반 (체크하면 바로 저장돼요)</p>
                         <div className="flex flex-wrap gap-1.5">
                           {data.classes.filter(c => !c.archived).map(c => (
                             <label key={c.id} className="flex items-center gap-1 text-[11px] bg-white border border-gray-200 rounded-full px-2 py-0.5">
                               <input type="checkbox" checked={(t.classIds || []).includes(c.id)}
-                                onChange={e => updateTeacherClassIds(t.uid, e.target.checked ? [...(t.classIds || []), c.id] : (t.classIds || []).filter(id => id !== c.id))} />
+                                onChange={e => {
+                                  updateTeacherClassIds(t.uid, e.target.checked ? [...(t.classIds || []), c.id] : (t.classIds || []).filter(id => id !== c.id));
+                                  setApprovalFlash(`${t.name} 선생님의 담당 반이 저장됐어요. (${c.name} ${e.target.checked ? '추가' : '제외'})`);
+                                }} />
                               {c.name}
                             </label>
                           ))}
                           {data.classes.filter(c => !c.archived).length === 0 && <span className="text-[11px] text-gray-400">등록된 반이 없습니다.</span>}
                         </div>
-                        <p className="text-[11px] text-gray-400 mt-2 mb-1">탭별 권한 (열람만 ↔ 작성 가능)</p>
+                        <p className="text-[11px] text-gray-400 mt-2 mb-1">탭별 권한 (눌러서 바로 저장, 접근 안 함 ↔ 열람만 ↔ 작성 가능)</p>
                         <div className="flex gap-1.5 mb-1.5">
                           <button
-                            onClick={() => { const next = {}; TEACHER_PERMISSION_TABS.forEach(k => { next[k] = 'write'; }); updateTeacherTabPermissions(t.uid, next); }}
+                            onClick={() => {
+                              const next = {}; TEACHER_PERMISSION_TABS.forEach(k => { next[k] = 'write'; });
+                              updateTeacherTabPermissions(t.uid, next);
+                              setApprovalFlash(`${t.name} 선생님을 담당선생님(전체 작성 가능)으로 저장했어요.`);
+                            }}
                             className="text-[11px] px-2 py-0.5 rounded-full border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
                           >👩‍🏫 담당선생님</button>
                           <button
-                            onClick={() => { const next = {}; TEACHER_PERMISSION_TABS.forEach(k => { next[k] = k === 'vocabtest' ? 'write' : 'view'; }); updateTeacherTabPermissions(t.uid, next); }}
+                            onClick={() => {
+                              const next = {}; TEACHER_PERMISSION_TABS.forEach(k => { next[k] = k === 'vocabtest' ? 'write' : (k === 'counseling' ? 'none' : 'view'); });
+                              updateTeacherTabPermissions(t.uid, next);
+                              setApprovalFlash(`${t.name} 선생님을 채점선생님(단어/문법시험만 작성, 상담관리 숨김)으로 저장했어요.`);
+                            }}
                             className="text-[11px] px-2 py-0.5 rounded-full border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100"
                           >📝 채점선생님</button>
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="space-y-1">
                           {TEACHER_PERMISSION_TABS.map(key => {
                             const cur = (t.tabPermissions && t.tabPermissions[key]) || 'write';
+                            const setPerm = (val, label) => {
+                              updateTeacherTabPermissions(t.uid, { ...(t.tabPermissions || {}), [key]: val });
+                              setApprovalFlash(`${t.name} 선생님의 ${TAB_META[key].label} 권한이 '${label}'(으)로 저장됐어요.`);
+                            };
                             return (
-                              <button key={key}
-                                onClick={() => updateTeacherTabPermissions(t.uid, { ...(t.tabPermissions || {}), [key]: cur === 'view' ? 'write' : 'view' })}
-                                className={`text-[11px] px-2 py-0.5 rounded-full border ${cur === 'view' ? 'bg-gray-700 text-white border-gray-700' : 'bg-white text-gray-500 border-gray-300'}`}
-                                title={cur === 'view' ? '클릭하면 작성 가능으로 바뀜' : '클릭하면 열람만으로 바뀜'}
-                              >{TAB_META[key].icon} {TAB_META[key].label} {cur === 'view' ? '(열람만)' : ''}</button>
+                              <div key={key} className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-2 py-1">
+                                <span className="text-[11px] text-gray-600">{TAB_META[key].icon} {TAB_META[key].label}</span>
+                                <div className="flex gap-1">
+                                  <button onClick={() => setPerm('none', '접근 안 함')}
+                                    className={`text-[10px] px-1.5 py-0.5 rounded-full border ${cur === 'none' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-400 border-gray-200'}`}>접근 안 함</button>
+                                  <button onClick={() => setPerm('view', '열람만')}
+                                    className={`text-[10px] px-1.5 py-0.5 rounded-full border ${cur === 'view' ? 'bg-gray-700 text-white border-gray-700' : 'bg-white text-gray-400 border-gray-200'}`}>열람만</button>
+                                  <button onClick={() => setPerm('write', '작성 가능')}
+                                    className={`text-[10px] px-1.5 py-0.5 rounded-full border ${cur === 'write' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-400 border-gray-200'}`}>작성 가능</button>
+                                </div>
+                              </div>
                             );
                           })}
                         </div>
@@ -7335,15 +7364,17 @@ function TeacherApprovalWizard({ teacher, classes, permTabs, tabMeta, onApprove,
               className="text-[11px] px-2.5 py-1 rounded-full border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
             >👩‍🏫 담당선생님 (전체 작성 가능)</button>
             <button
-              onClick={() => { const next = {}; permTabs.forEach(k => { next[k] = k === 'vocabtest' ? 'write' : 'view'; }); setPerms(next); }}
+              onClick={() => { const next = {}; permTabs.forEach(k => { next[k] = k === 'vocabtest' ? 'write' : (k === 'counseling' ? 'none' : 'view'); }); setPerms(next); }}
               className="text-[11px] px-2.5 py-1 rounded-full border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100"
-            >📝 채점선생님 (단어/문법시험만 작성)</button>
+            >📝 채점선생님 (단어/문법시험만 작성, 상담관리 숨김)</button>
           </div>
           <div className="space-y-1.5">
             {permTabs.map(key => (
               <div key={key} className="flex items-center justify-between bg-gray-50 rounded-lg px-2.5 py-1.5">
                 <span className="text-xs text-gray-700">{tabMeta[key].icon} {tabMeta[key].label}</span>
                 <div className="flex gap-1">
+                  <button onClick={() => setPerms(p => ({ ...p, [key]: 'none' }))}
+                    className={`text-[11px] px-2 py-0.5 rounded-full border ${perms[key] === 'none' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-500 border-gray-300'}`}>접근 안 함</button>
                   <button onClick={() => setPerms(p => ({ ...p, [key]: 'view' }))}
                     className={`text-[11px] px-2 py-0.5 rounded-full border ${perms[key] === 'view' ? 'bg-gray-700 text-white border-gray-700' : 'bg-white text-gray-500 border-gray-300'}`}>열람만</button>
                   <button onClick={() => setPerms(p => ({ ...p, [key]: 'write' }))}
